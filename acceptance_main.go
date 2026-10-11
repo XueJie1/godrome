@@ -100,7 +100,7 @@ func main() {
 		if *report == "" {
 			return
 		}
-		data, _ := json.MarshalIndent(map[string]any{"scenario": *scenario, "elapsed_s": time.Since(started).Seconds(), "steps": steps, "generation": a.generation, "playing_transitions": playingEvents, "pause_transitions": pauses, "error_count": errorsSeen, "first_error": firstError, "cover_requests": coverRequests.Load(), "album_requests": albumRequests.Load(), "max_cached_pages": maxPages, "max_songs": maxSongs, "queue_length": len(a.play.queue.Songs), "position": a.position, "state": a.playback.State, "timeline": timeline}, "", "  ")
+		data, _ := json.MarshalIndent(map[string]any{"scenario": *scenario, "elapsed_s": time.Since(started).Seconds(), "steps": steps, "generation": a.generation, "playing_transitions": playingEvents, "pause_transitions": pauses, "error_count": errorsSeen, "first_error": firstError, "cover_requests": coverRequests.Load(), "album_requests": albumRequests.Load(), "max_cached_pages": maxPages, "max_songs": maxSongs, "queue_length": len(a.play.queue.Songs), "position": a.position, "state": playbackLabel(a.playback.State), "timeline": timeline}, "", "  ")
 		if err := os.WriteFile(*report, data, 0600); err != nil {
 			panic("cannot save acceptance report")
 		}
@@ -155,7 +155,7 @@ func main() {
 							lastPlayingGeneration = a.generation
 						}
 						if *scenario == "desktop" || *scenario == "live" {
-							timeline = append(timeline, map[string]any{"elapsed_s": time.Since(started).Seconds(), "page": a.screen.legacyPage(), "state": a.playback.State, "generation": a.generation, "position": a.position, "selected_album": a.selectedAlbum, "selected_song": a.selectedSong, "selected_queue": a.selectedQueue, "queue_length": len(a.play.queue.Songs)})
+							timeline = append(timeline, map[string]any{"elapsed_s": time.Since(started).Seconds(), "page": a.screen.legacyPage(), "state": playbackLabel(a.playback.State), "generation": a.generation, "position": a.position, "selected_album": a.selectedAlbum, "selected_song": a.selectedSong, "selected_queue": a.selectedQueue, "queue_length": len(a.play.queue.Songs)})
 						}
 						if time.Since(started) >= *duration {
 							win.Close()

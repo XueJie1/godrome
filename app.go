@@ -423,6 +423,27 @@ func (a *app) close() {
 		a.engine.Close()
 	})
 }
+func playbackLabel(state player.State) string {
+	switch state {
+	case player.Idle:
+		return "待播放"
+	case player.Loading:
+		return "加载中"
+	case player.Playing:
+		return "播放中"
+	case player.Paused:
+		return "已暂停"
+	case player.Buffering:
+		return "缓冲中"
+	case player.Ended:
+		return "播放结束"
+	case player.Failed:
+		return "播放失败"
+	default:
+		return "待播放"
+	}
+}
+
 func clockText(seconds float64) string {
 	s := max(0, int(seconds))
 	return fmt.Sprintf("%d:%02d", s/60, s%60)

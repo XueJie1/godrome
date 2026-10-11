@@ -57,6 +57,26 @@ func waitUpdate(t *testing.T, updates chan func()) {
 		t.Fatal("missing UI result")
 	}
 }
+func TestPlaybackLabelMatchesAcceptanceCopy(t *testing.T) {
+	labels := map[player.State]string{
+		player.Idle:      "待播放",
+		player.Loading:   "加载中",
+		player.Playing:   "播放中",
+		player.Paused:    "已暂停",
+		player.Buffering: "缓冲中",
+		player.Ended:     "播放结束",
+		player.Failed:    "播放失败",
+	}
+	if len(labels) != 7 {
+		t.Fatal("playback label missing a state")
+	}
+	for state, label := range labels {
+		if playbackLabel(state) != label {
+			t.Fatalf("state %d label %q", state, playbackLabel(state))
+		}
+	}
+}
+
 func TestLoginAndOnlineViews(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

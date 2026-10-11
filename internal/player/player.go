@@ -9,16 +9,16 @@ import (
 	"time"
 )
 
-type State string
+type State int
 
 const (
-	Idle      State = "待播放"
-	Loading   State = "加载中"
-	Playing   State = "播放中"
-	Paused    State = "已暂停"
-	Buffering State = "缓冲中"
-	Ended     State = "播放结束"
-	Failed    State = "播放失败"
+	Idle State = iota
+	Loading
+	Playing
+	Paused
+	Buffering
+	Ended
+	Failed
 )
 
 type Event struct {
