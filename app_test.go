@@ -223,6 +223,72 @@ func TestSearchDebounceCancellationAndStaleResults(t *testing.T) {
 		t.Fatal("stale player result accepted")
 	}
 }
+func TestSongSelectionClearsTheScrollbar(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.screen = screenAlbum
+	a.albumName = "专辑"
+	for i := range 40 {
+		a.songs = append(a.songs, subsonic.Song{ID: fmt.Sprint(i), Title: fmt.Sprintf("曲目 %d", i), Artist: "艺人", Duration: 60})
+	}
+	a.selectedSong = 2
+	tt := ui.NewTester(a.view, 1080, 720)
+	row, ok := tt.Find("曲目 2")
+	if !ok {
+		t.Fatal("selected song not shown")
+	}
+	// The thumb shows only while the pointer is over the list, and only
+	// along the top of the track when the list is at its start.
+	tt.Move(row.X+8, row.Y-row.H)
+	img := tt.Image()
+	y0, y1 := int(row.Y), int(row.Y+row.H)
+	if y0 < 0 || y1 > img.Bounds().Dy() {
+		t.Fatalf("row outside the frame: %v", row)
+	}
+	accent := -1
+	for y := y0; y < y1; y++ {
+		for x := int(row.X); x < int(row.X+row.W)+2 && x < img.Bounds().Dx(); x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if r>>8 > 200 && g>>8 < 90 && b>>8 < 110 && x > accent {
+				accent = x
+			}
+		}
+	}
+	// The thumb is black at 32% over the page, about rgb(173, 173, 173).
+	// It sits in the list's right edge, above a row chosen near the top.
+	bar := -1
+	x0, x1 := int(row.X+row.W), int(row.X+row.W)+28
+	for y := int(row.Y - row.H*3); y < y0; y++ {
+		if y < 0 {
+			continue
+		}
+		for x := x0; x < x1 && x < img.Bounds().Dx(); x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			r, g, b = r>>8, g>>8, b>>8
+			if r > 160 && r < 190 && absInt(int(r)-int(g)) < 6 && absInt(int(g)-int(b)) < 6 {
+				if bar < 0 || x < bar {
+					bar = x
+				}
+			}
+		}
+	}
+	if accent < 0 {
+		t.Fatal("selection highlight not painted")
+	}
+	if bar < 0 {
+		t.Fatalf("scrollbar not painted while the pointer is over the list; highlight ends at x=%d", accent)
+	}
+	if accent+6 >= bar {
+		t.Fatalf("selection reaches the scrollbar: highlight ends at %d, thumb starts at %d, row %v", accent, bar, row)
+	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func TestVirtualSongList(t *testing.T) {
 	a, _, _ := testApp(t)
 	a.screen = screenLocal

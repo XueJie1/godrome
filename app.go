@@ -472,6 +472,18 @@ func appleMusic(c *ui.Context) *ui.Theme {
 	return c.Theme()
 }
 
+// listScrollGutter is the room a vertical MyGO scroll thumb needs on the
+// right of a list. The thumb is painted over the content: it sits 3 DIPs
+// in from a track of width+6, and grows 2 DIPs to the left while dragged.
+// Row highlights stop short of that track.
+func listScrollGutter(t *ui.Theme) float32 {
+	w := t.ScrollbarWidth
+	if w <= 0 {
+		w = 6
+	}
+	return w + 16
+}
+
 func (a *app) view(c *ui.Context) {
 	t := appleMusic(c)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -703,6 +715,8 @@ func (a *app) songView(c *ui.Context) {
 	a.songsList.Key = func(i int) any { return a.songs[i].ID }
 	a.songsList.Label = func(i int) string { return a.songs[i].Title }
 	play, add := -1, -1
+	// The scroll thumb is painted over the row. Right padding keeps the
+	// selection highlight clear of it.
 	list := ui.List(c, &a.songsList, len(a.songs), func(i int) {
 		song := a.songs[i]
 		playing := false
@@ -741,7 +755,7 @@ func (a *app) songView(c *ui.Context) {
 				}).Children(func() { ui.Icon(c, iconMore).Size(16, 16) })
 			})
 		})
-	}).Grow(1).Children(func() {
+	}).Padding(0, listScrollGutter(t), 0, 0).Grow(1).Children(func() {
 		if !a.busy && len(a.songs) == 0 {
 			ui.Text(c, "没有歌曲").TextColor(t.TextMuted).Padding(12)
 		}
