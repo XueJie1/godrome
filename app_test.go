@@ -238,7 +238,11 @@ func TestSongSelectionClearsTheScrollbar(t *testing.T) {
 	}
 	// The thumb shows only while the pointer is over the list, and only
 	// along the top of the track when the list is at its start.
-	tt.Move(row.X+8, row.Y-row.H)
+	first, ok := tt.Find("曲目 0")
+	if !ok {
+		t.Fatal("first song not shown")
+	}
+	tt.Move(row.X+8, first.Y+4)
 	img := tt.Image()
 	y0, y1 := int(row.Y), int(row.Y+row.H)
 	if y0 < 0 || y1 > img.Bounds().Dy() {
@@ -254,10 +258,11 @@ func TestSongSelectionClearsTheScrollbar(t *testing.T) {
 		}
 	}
 	// The thumb is black at 32% over the page, about rgb(173, 173, 173).
-	// It sits in the list's right edge, above a row chosen near the top.
+	// Sample it beside the first row, inside the list, so the header
+	// button is not mistaken for the thumb.
 	bar := -1
 	x0, x1 := int(row.X+row.W), int(row.X+row.W)+28
-	for y := int(row.Y - row.H*3); y < y0; y++ {
+	for y := int(first.Y); y < int(first.Y+first.H); y++ {
 		if y < 0 {
 			continue
 		}
@@ -275,7 +280,7 @@ func TestSongSelectionClearsTheScrollbar(t *testing.T) {
 		t.Fatal("selection highlight not painted")
 	}
 	if bar < 0 {
-		t.Fatalf("scrollbar not painted while the pointer is over the list; highlight ends at x=%d", accent)
+		t.Fatalf("scrollbar not painted while the pointer is over the list; highlight ends at x=%d row=%v", accent, row)
 	}
 	if accent+6 >= bar {
 		t.Fatalf("selection reaches the scrollbar: highlight ends at %d, thumb starts at %d, row %v", accent, bar, row)
@@ -287,6 +292,118 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+func TestHeadersDoNotRepeatTheSidebar(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenAlbums
+	a.albums = []subsonic.Album{{ID: "a", Name: "测试专辑"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if tt.HasText("资料库") {
+		t.Fatalf("album header repeats the sidebar: %v", tt.Texts())
+	}
+	a.screen = screenLibrary
+	a.songs = []subsonic.Song{{ID: "1", Title: "第一首", Artist: "艺人"}}
+	tt.Frame()
+	if tt.HasText("资料库") {
+		t.Fatalf("library header repeats the sidebar: %v", tt.Texts())
+	}
+}
+
+func TestAlbumPageReturnsToTheSameAlbumPage(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenAlbum
+	a.pageOffset = 100
+	a.pages = []albumPage{{offset: 100, albums: []subsonic.Album{{ID: "a", Name: "测试专辑"}}}}
+	a.albumName = "测试专辑"
+	a.songs = []subsonic.Song{{ID: "1", Title: "第一首", Artist: "艺人"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("返回专辑"); err != nil {
+		t.Fatal(err)
+	}
+	if a.screen != screenAlbums || a.pageOffset != 100 || len(a.albums) != 1 {
+		t.Fatalf("return left screen=%s offset=%d albums=%d", a.screen, a.pageOffset, len(a.albums))
+	}
+}
+
+func TestPlaceholderNamesThePageOnce(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.showPlaceholder(screenStarred, "喜爱")
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("还没有这一页。从左侧回到曲库。") {
+		t.Fatalf("placeholder copy missing: %v", tt.Texts())
+	}
+	n := 0
+	for _, text := range tt.Texts() {
+		if text == "喜爱" || text == "即将推出" {
+			n++
+		}
+	}
+	// The sidebar item is the other "喜爱". The page itself says it once.
+	if n != 2 || tt.HasText("即将推出") {
+		t.Fatalf("page name shown %d times: %v", n, tt.Texts())
+	}
+}
+
+func TestQueueSelectionClearsTheScrollbar(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.screen = screenLibrary
+	a.queueVisible = true
+	for i := range 40 {
+		a.play.queue.Add(subsonic.Song{ID: fmt.Sprint(i), Title: fmt.Sprintf("队列曲目 %d", i)})
+	}
+	a.selectedQueue = 2
+	tt := ui.NewTester(a.view, 1080, 720)
+	row, ok := tt.Find("队列曲目 2")
+	if !ok {
+		t.Fatal("selected queue song not shown")
+	}
+	first, ok := tt.Find("队列曲目 0")
+	if !ok {
+		t.Fatal("first queue song not shown")
+	}
+	tt.Move(row.X+8, first.Y+4)
+	img := tt.Image()
+	y0, y1 := int(row.Y), int(row.Y+row.H)
+	accent := -1
+	for y := y0; y < y1 && y < img.Bounds().Dy(); y++ {
+		if y < 0 {
+			continue
+		}
+		for x := int(row.X); x < int(row.X+row.W)+2 && x < img.Bounds().Dx(); x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if r>>8 > 200 && g>>8 < 90 && b>>8 < 110 && x > accent {
+				accent = x
+			}
+		}
+	}
+	bar := -1
+	x0, x1 := int(row.X+row.W), int(row.X+row.W)+28
+	for y := int(first.Y); y < int(first.Y+first.H); y++ {
+		if y < 0 {
+			continue
+		}
+		for x := x0; x < x1 && x < img.Bounds().Dx(); x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			r, g, b = r>>8, g>>8, b>>8
+			if r > 160 && r < 190 && absInt(int(r)-int(g)) < 6 && absInt(int(g)-int(b)) < 6 {
+				if bar < 0 || x < bar {
+					bar = x
+				}
+			}
+		}
+	}
+	if accent < 0 {
+		t.Fatal("queue selection highlight not painted")
+	}
+	if bar < 0 {
+		t.Fatalf("queue scrollbar not painted; highlight ends at x=%d", accent)
+	}
+	if accent+6 >= bar {
+		t.Fatalf("queue selection reaches the scrollbar: highlight ends at %d, thumb starts at %d, row %v", accent, bar, row)
+	}
 }
 
 func TestVirtualSongList(t *testing.T) {

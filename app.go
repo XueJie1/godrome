@@ -475,7 +475,7 @@ func appleMusic(c *ui.Context) *ui.Theme {
 // listScrollGutter is the room a vertical MyGO scroll thumb needs on the
 // right of a list. The thumb is painted over the content: it sits 3 DIPs
 // in from a track of width+6, and grows 2 DIPs to the left while dragged.
-// Row highlights stop short of that track.
+// Row padding stops the highlight short of that track.
 func listScrollGutter(t *ui.Theme) float32 {
 	w := t.ScrollbarWidth
 	if w <= 0 {
@@ -555,11 +555,11 @@ func (a *app) placeholderView(c *ui.Context) {
 	t := c.Theme()
 	title := a.albumName
 	if title == "" {
-		title = "即将推出"
+		title = "这一页"
 	}
 	ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
 		ui.Text(c, title).FontSize(30).FontWeight(700)
-		ui.Text(c, "即将推出").TextColor(t.TextMuted)
+		ui.Text(c, "还没有这一页。从左侧回到曲库。").TextColor(t.TextMuted)
 	})
 }
 
@@ -609,25 +609,29 @@ func (a *app) loginView(c *ui.Context) {
 
 func (a *app) coverArt(c *ui.Context, id string, size float32) {
 	t := c.Theme()
-	box := ui.Box(c).Size(size, size).Radius(8).Clip().Background(t.SurfaceHover).Shrink(0).Shadow(0, 8, 18, 0, ui.RGBA(0, 0, 0, 0.16))
+	var bitmap *ui.Bitmap
+	if a.covers != nil {
+		bitmap = a.covers.Get(id)
+	}
+	box := ui.Box(c).Size(size, size).Radius(8).Clip().Background(t.SurfaceHover).Shrink(0)
+	if bitmap != nil {
+		box.Shadow(0, 8, 18, 0, ui.RGBA(0, 0, 0, 0.16))
+	}
 	box.Children(func() {
-		if a.covers != nil {
-			if b := a.covers.Get(id); b != nil {
-				ui.Image(c, b).Size(size, size).Fit(ui.Cover).Radius(8)
-				return
-			}
+		if bitmap != nil {
+			ui.Image(c, bitmap).Size(size, size).Fit(ui.Cover).Radius(8)
+			return
 		}
-		ui.Text(c, "♪").Size(size, size).TextAlign(ui.Center).TextColor(t.TextMuted)
+		ui.Column(c).Size(size, size).Center().Children(func() {
+			ui.Icon(c, iconDisc).Size(24, 24).TextColor(t.TextMuted)
+		})
 	})
 }
 
 func (a *app) albumView(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).AlignItems(ui.End).Padding(6, 2, 12, 2).Children(func() {
-		ui.Column(c).Grow(1).Children(func() {
-			ui.Text(c, "资料库").FontSize(13).TextColor(t.TextMuted)
-			ui.Text(c, "专辑").FontSize(30).FontWeight(700)
-		})
+		ui.Text(c, "专辑").FontSize(30).FontWeight(700).Grow(1)
 		ui.Textf(c, "第 %d 页", a.pageOffset/subsonic.PageSize+1).TextColor(t.TextMuted)
 	})
 	a.albumsGrid.Selected = &a.selectedAlbum
@@ -699,17 +703,17 @@ func (a *app) songView(c *ui.Context) {
 			a.coverArt(c, cover, 148)
 		}
 		ui.Column(c).Grow(1).Gap(4).Children(func() {
-			kind := "专辑"
-			if library {
-				kind = "资料库"
-			}
-			ui.Text(c, kind).FontSize(12).FontWeight(600).TextColor(t.Accent)
 			ui.Text(c, title).FontSize(30).FontWeight(700).SingleLine()
 			if artist != "" {
 				ui.Text(c, artist).TextColor(t.TextMuted)
 			}
 			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
 		})
+		if a.screen == screenAlbum {
+			if ui.Button(c, "返回专辑").Clicked() {
+				a.browse(a.pageOffset)
+			}
+		}
 	})
 	a.songsList.Selected = &a.selectedSong
 	a.songsList.Key = func(i int) any { return a.songs[i].ID }
@@ -811,7 +815,7 @@ func (a *app) queueView(c *ui.Context) {
 				}
 			})
 		})
-	}).Grow(1).Children(func() {
+	}).Padding(0, listScrollGutter(t), 0, 0).Grow(1).Children(func() {
 		if len(a.play.queue.Songs) == 0 {
 			ui.Text(c, "队列为空").TextColor(t.TextMuted).Padding(8, 10)
 		}
@@ -851,7 +855,7 @@ func (a *app) controlsView(c *ui.Context) {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 			ui.Text(c, clockText(a.position)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").Width(40).TextAlign(ui.End)
 			playable := a.playback.State == player.Playing || a.playback.State == player.Paused || a.playback.State == player.Buffering
-			if ui.Slider(c, &a.position, 0, max(1, a.playback.Duration)).Label("播放进度").Width(420).Disabled(!playable || a.playback.Duration <= 0).Changed() {
+			if ui.Slider(c, &a.position, 0, max(1, a.playback.Duration)).Label("播放进度").Grow(1).MinWidth(160).MaxWidth(560).Disabled(!playable || a.playback.Duration <= 0).Changed() {
 				a.control(a.engine.Seek(a.position))
 			}
 			ui.Text(c, clockText(a.playback.Duration)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").Width(40)
