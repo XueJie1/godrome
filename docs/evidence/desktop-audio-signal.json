@@ -1,0 +1,47 @@
+{
+  "output": "default sink monitor",
+  "frames": 384000,
+  "audio_persisted": false,
+  "seconds": [
+    {
+      "second": 0,
+      "rms_s16": 16.377613023066985,
+      "440hz_energy_ratio": 0.9997101402035561
+    },
+    {
+      "second": 1,
+      "rms_s16": 16.376969347226613,
+      "440hz_energy_ratio": 0.9997099630670645
+    },
+    {
+      "second": 2,
+      "rms_s16": 16.377499809189437,
+      "440hz_energy_ratio": 0.9997099647049787
+    },
+    {
+      "second": 3,
+      "rms_s16": 16.379146421593525,
+      "440hz_energy_ratio": 0.9997100728076626
+    },
+    {
+      "second": 4,
+      "rms_s16": 16.377650548842468,
+      "440hz_energy_ratio": 0.9997097982664132
+    },
+    {
+      "second": 5,
+      "rms_s16": 16.375879111261987,
+      "440hz_energy_ratio": 0.9997092608732614
+    },
+    {
+      "second": 6,
+      "rms_s16": 16.377321718360015,
+      "440hz_energy_ratio": 0.9997099716749395
+    },
+    {
+      "second": 7,
+      "rms_s16": 16.11393030889733,
+      "440hz_energy_ratio": 0.922637189013708
+    }
+  ]
+}

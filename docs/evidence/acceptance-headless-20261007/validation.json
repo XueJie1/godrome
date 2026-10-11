@@ -1,0 +1,24 @@
+{
+  "scenarios": 12,
+  "runs": 36,
+  "duration_and_workload_validation": "scripts/acceptance.py --summarize-only passed",
+  "all_processes_exit_zero": true,
+  "all_stderr_empty": true,
+  "binary_hash_matches": {
+    "binary_sha256": true,
+    "production_binary_sha256": true
+  },
+  "private_compositor_stopped": true,
+  "versions_collected_after_measurement": {
+    "go": "go version go1.27.1-X:nodwarf5 linux/amd64",
+    "sway": "sway version 1.12",
+    "libmpv": "2.5.0",
+    "gtk": "3.24.52"
+  },
+  "sample_sha256": {
+    "sample.flac": "09d63673b0a3d92f224b5a248ef13ab5de951ccdbb20a8b120db21b1b0b5b67b",
+    "sample.m4a": "6ca40ed8e3d7a9c76c8fdff0886d3428d3523fc8aefd7fe960ad6ff8066bbb6c",
+    "sample.mp3": "dbc778f2b1712d3e8c16af83d01fc3cf99f27e0777ad01d9848f533018874404",
+    "sample.opus": "48e64a3b13ca3f8b25e9fdfa19f209a20693a3c05ab99ef5e9f61b219a3f2259"
+  }
+}

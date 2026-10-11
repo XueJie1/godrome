@@ -1,0 +1,27 @@
+name: checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build -trimpath -ldflags="-s -w -X github.com/egoist/mygo.production=1" -o build/godrome .
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmpv2 ffmpeg
+          sh scripts/audio-samples.sh
+          GODROME_AUDIO_SAMPLES="$PWD/testdata/audio" go test -race ./internal/player -v

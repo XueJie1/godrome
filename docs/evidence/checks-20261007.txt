@@ -1,0 +1,28 @@
+COMMAND: make build check test
+mkdir -p build
+go build -buildvcs=false -trimpath -ldflags='-s -w -X github.com/egoist/mygo.production=1' -o build/godrome .
+test -z "$(go fmt ./...)"
+go vet ./...
+go test -race ./...
+ok  	godrome	2.075s
+ok  	godrome/internal/config	(cached)
+ok  	godrome/internal/cover	(cached)
+ok  	godrome/internal/player	(cached)
+ok  	godrome/internal/queue	(cached)
+ok  	godrome/internal/subsonic	(cached)
+COMMAND: make test-audio
+sh scripts/audio-samples.sh
+GODROME_AUDIO_SAMPLES="/home/cao/workspace/godrome/testdata/audio" go test -race ./internal/player -v
+=== RUN   TestFormatsPauseSeekEOFAndStream
+=== RUN   TestFormatsPauseSeekEOFAndStream/mp3
+=== RUN   TestFormatsPauseSeekEOFAndStream/flac
+=== RUN   TestFormatsPauseSeekEOFAndStream/m4a
+=== RUN   TestFormatsPauseSeekEOFAndStream/opus
+--- PASS: TestFormatsPauseSeekEOFAndStream (2.63s)
+    --- PASS: TestFormatsPauseSeekEOFAndStream/mp3 (0.64s)
+    --- PASS: TestFormatsPauseSeekEOFAndStream/flac (0.49s)
+    --- PASS: TestFormatsPauseSeekEOFAndStream/m4a (0.53s)
+    --- PASS: TestFormatsPauseSeekEOFAndStream/opus (0.51s)
+PASS
+ok  	godrome/internal/player	3.642s
+COMMAND: go vet app.go metrics.go acceptance_main.go

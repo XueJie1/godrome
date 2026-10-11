@@ -1,0 +1,107 @@
+{
+  "empty": [
+    {
+      "run": "run-1",
+      "rss_mib": 64.53,
+      "pss_mib": 35.5,
+      "peak_rss_mib": 78.48,
+      "peak_pss_mib": 49.46,
+      "cpu_percent": 0.0,
+      "threads": 24,
+      "heap_alloc_mib": 3.17,
+      "goroutines": 14
+    },
+    {
+      "run": "run-2",
+      "rss_mib": 66.59,
+      "pss_mib": 37.49,
+      "peak_rss_mib": 80.55,
+      "peak_pss_mib": 51.45,
+      "cpu_percent": 0.0,
+      "threads": 25,
+      "heap_alloc_mib": 3.18,
+      "goroutines": 14
+    },
+    {
+      "run": "run-3",
+      "rss_mib": 64.72,
+      "pss_mib": 35.55,
+      "peak_rss_mib": 78.68,
+      "peak_pss_mib": 49.51,
+      "cpu_percent": 0.0,
+      "threads": 25,
+      "heap_alloc_mib": 3.18,
+      "goroutines": 14
+    }
+  ],
+  "login": [
+    {
+      "run": "run-1",
+      "rss_mib": 73.39,
+      "pss_mib": 39.73,
+      "peak_rss_mib": 86.09,
+      "peak_pss_mib": 52.43,
+      "cpu_percent": 0.99,
+      "threads": 23,
+      "heap_alloc_mib": 3.31,
+      "goroutines": 14
+    },
+    {
+      "run": "run-2",
+      "rss_mib": 73.56,
+      "pss_mib": 39.91,
+      "peak_rss_mib": 85.74,
+      "peak_pss_mib": 52.09,
+      "cpu_percent": 0.0,
+      "threads": 23,
+      "heap_alloc_mib": 3.32,
+      "goroutines": 14
+    },
+    {
+      "run": "run-3",
+      "rss_mib": 71.59,
+      "pss_mib": 37.92,
+      "peak_rss_mib": 84.02,
+      "peak_pss_mib": 50.35,
+      "cpu_percent": 0.0,
+      "threads": 21,
+      "heap_alloc_mib": 3.3,
+      "goroutines": 14
+    }
+  ],
+  "flac": [
+    {
+      "run": "run-1",
+      "rss_mib": 161.93,
+      "pss_mib": 99.06,
+      "peak_rss_mib": 161.94,
+      "peak_pss_mib": 99.08,
+      "cpu_percent": 1.99,
+      "threads": 36,
+      "heap_alloc_mib": 3.47,
+      "goroutines": 14
+    },
+    {
+      "run": "run-2",
+      "rss_mib": 159.98,
+      "pss_mib": 96.84,
+      "peak_rss_mib": 160.0,
+      "peak_pss_mib": 96.86,
+      "cpu_percent": 2.98,
+      "threads": 38,
+      "heap_alloc_mib": 3.58,
+      "goroutines": 14
+    },
+    {
+      "run": "run-3",
+      "rss_mib": 159.88,
+      "pss_mib": 96.85,
+      "peak_rss_mib": 159.89,
+      "peak_pss_mib": 96.87,
+      "cpu_percent": 1.99,
+      "threads": 36,
+      "heap_alloc_mib": 3.47,
+      "goroutines": 14
+    }
+  ]
+}

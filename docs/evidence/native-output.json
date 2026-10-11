@@ -1,0 +1,21 @@
+{
+  "app_exit_code": 0,
+  "sample_frames": 294912,
+  "rms_s16": 567.93,
+  "nonzero_samples": 383360,
+  "output": "system default sink monitor",
+  "window": {
+    "x": 228,
+    "y": 92,
+    "width": 1080,
+    "height": 720
+  },
+  "440hz_energy_ratio_by_second": [
+    0.8186,
+    1.0,
+    1.0,
+    1.0,
+    0.1814,
+    0
+  ]
+}

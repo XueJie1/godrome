@@ -1,0 +1,5 @@
+/build/
+/testdata/audio/
+/testdata/acceptance-audio/
+*.test
+__pycache__/

@@ -1,0 +1,16 @@
+{
+  "runs": 1,
+  "seconds": 10,
+  "switch_seconds": 10,
+  "window_logical": [
+    1080,
+    720
+  ],
+  "sampling_s": 0.5,
+  "heap_sampling_s": 1,
+  "forced_gc": false,
+  "audio_output": "null",
+  "fixture": "in-process generated loopback Subsonic; no personal content",
+  "binary_sha256": "dd62ec4b8cda918dc6c4fee0ea4a415d11bc312fdfc8b22d98f67dc78320b721",
+  "production_binary_sha256": "8de737e03bad356cefd646cdd6995660680a84d243662a1e96ca3866e575ad29"
+}

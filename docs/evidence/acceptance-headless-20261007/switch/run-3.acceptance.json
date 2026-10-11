@@ -1,0 +1,18 @@
+{
+  "album_requests": 0,
+  "cover_requests": 0,
+  "elapsed_s": 1800.06185564,
+  "error_count": 0,
+  "first_error": "",
+  "generation": 900,
+  "max_cached_pages": 0,
+  "max_songs": 4,
+  "pause_transitions": 0,
+  "playing_transitions": 900,
+  "position": 1.6349660441080744,
+  "queue_length": 4,
+  "scenario": "switch",
+  "state": "播放中",
+  "steps": 3599,
+  "timeline": null
+}

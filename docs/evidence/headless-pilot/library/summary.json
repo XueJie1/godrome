@@ -1,0 +1,38 @@
+[
+  {
+    "run": "run-1",
+    "duration_s": 9.566,
+    "samples": 20,
+    "stable_window_start_s": 5,
+    "rss_peak": 100.22265625,
+    "rss_median": 100.18359375,
+    "pss_peak": 61.6474609375,
+    "pss_median": 61.6044921875,
+    "cpu_peak": 31.74,
+    "cpu_median": 1.99,
+    "threads_peak": 25.0,
+    "threads_median": 25.0,
+    "heap_peak": 7.597076416015625,
+    "heap_median": 6.5547027587890625,
+    "goroutines_peak": 23.0,
+    "goroutines_median": 23.0,
+    "acceptance": {
+      "album_requests": 1,
+      "cover_requests": 25,
+      "elapsed_s": 10.056352453,
+      "error_count": 0,
+      "first_error": "",
+      "generation": 0,
+      "max_cached_pages": 1,
+      "max_songs": 10000,
+      "pause_transitions": 0,
+      "playing_transitions": 0,
+      "position": 0,
+      "queue_length": 0,
+      "scenario": "library",
+      "state": "\u5f85\u64ad\u653e",
+      "steps": 19,
+      "timeline": null
+    }
+  }
+]

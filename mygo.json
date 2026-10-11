@@ -1,0 +1,6 @@
+{
+  "name": "Godrome",
+  "identifier": "io.godrome.prototype",
+  "version": "0.1.0",
+  "out": "build"
+}
