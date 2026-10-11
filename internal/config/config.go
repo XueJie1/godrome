@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 )
 
-// No password, token, stream URL, queue or API result is persisted.
+// Settings is the JSON file. Passwords stay in the OS keyring; tokens,
+// stream URLs, queues and API results are not persisted.
 type Settings struct {
 	Server       string  `json:"server"`
 	Username     string  `json:"username"`

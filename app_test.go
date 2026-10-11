@@ -9,15 +9,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/zalando/go-keyring"
 	"godrome/internal/config"
 	"godrome/internal/player"
 	"godrome/internal/subsonic"
 )
+
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
 
 type fakePlayer struct {
 	loads            []string
@@ -156,6 +163,86 @@ func TestLoginAndOnlineViews(t *testing.T) {
 	snapshot(t, tt, "dark-150.png")
 	if err := tt.Click("退出登录"); err != nil || a.client != nil || len(a.play.queue.Songs) != 0 {
 		t.Fatal("logout")
+	}
+}
+
+func TestSavedPasswordLogsInAgain(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/ping.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		case "/rest/getAlbumList2.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"a","name":"测试专辑"}]}}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer s.Close()
+	path := filepath.Join(t.TempDir(), "settings.json")
+	settings := config.Defaults()
+	settings.Server = s.URL
+	settings.Username = "user"
+	if err := config.Save(path, settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SavePassword(s.URL, "user", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakePlayer{}
+	a := newApp(settings, path, p)
+	updates := make(chan func(), 64)
+	a.post = func(fn func()) { updates <- fn }
+	t.Cleanup(a.close)
+	if !a.autoLogin || a.password == "" {
+		t.Fatal("saved password was not loaded")
+	}
+	tt := ui.NewTester(a.view, 1080, 720)
+	waitUpdate(t, updates)
+	waitUpdate(t, updates)
+	tt.Frame()
+	if a.client == nil || a.password != "" || !tt.HasText("测试专辑") {
+		t.Fatal("saved password did not log in")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(raw), "secret") {
+		t.Fatal("password written to settings")
+	}
+	if err := tt.Click("退出登录"); err != nil || a.client != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := config.LoadPassword(s.URL, "user"); err != nil || ok {
+		t.Fatal("logout kept the password")
+	}
+}
+
+func TestRejectedSavedPasswordIsForgotten(t *testing.T) {
+	var pings atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pings.Add(1)
+		fmt.Fprint(w, `{"subsonic-response":{"status":"failed","error":{"code":40}}}`)
+	}))
+	defer s.Close()
+	settings := config.Defaults()
+	settings.Server = s.URL
+	settings.Username = "user"
+	if err := config.SavePassword(s.URL, "user", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(settings, filepath.Join(t.TempDir(), "settings.json"), &fakePlayer{})
+	updates := make(chan func(), 64)
+	a.post = func(fn func()) { updates <- fn }
+	t.Cleanup(a.close)
+	tt := ui.NewTester(a.view, 1080, 720)
+	waitUpdate(t, updates)
+	tt.Frame()
+	if a.client != nil || a.autoLogin || a.busy || pings.Load() != 1 {
+		t.Fatalf("auto login retried: client=%v busy=%t pings=%d", a.client != nil, a.busy, pings.Load())
+	}
+	if _, ok, err := config.LoadPassword(s.URL, "user"); err != nil || ok {
+		t.Fatal("rejected password kept")
+	}
+	if !tt.HasText("认证失败") {
+		t.Fatal(tt.Texts())
 	}
 }
 

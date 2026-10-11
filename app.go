@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,6 +140,8 @@ type app struct {
 	nav                                        history
 	restoring                                  bool
 	closeOnce                                  sync.Once
+	remember                                   bool
+	autoLogin                                  bool
 }
 
 func newApp(settings config.Settings, path string, engine playback) *app {
@@ -151,7 +154,16 @@ func newApp(settings config.Settings, path string, engine playback) *app {
 	if queue == 0 {
 		queue = queueWidthDefault
 	}
-	return &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin}
+	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true}
+	if path != "" && settings.Server != "" && settings.Username != "" {
+		if password, ok, err := config.LoadPassword(settings.Server, settings.Username); err != nil {
+			a.errorText = err.Error()
+		} else if ok {
+			a.password = password
+			a.autoLogin = true
+		}
+	}
+	return a
 }
 func (a *app) dispatch(fn func()) {
 	if a.ctx.Err() == nil && a.post != nil {
@@ -225,6 +237,8 @@ func (a *app) setupCovers(ctx context.Context) {
 	a.covers = cover.New(ctx, client.Cover, func() { a.dispatch(func() {}) })
 }
 func (a *app) login() {
+	dropSaved := a.autoLogin
+	a.autoLogin = false
 	client, err := subsonic.New(a.server, a.username, a.password)
 	if err != nil {
 		a.errorText = err.Error()
@@ -234,15 +248,22 @@ func (a *app) login() {
 	go func() {
 		err := client.Ping(ctx)
 		a.dispatch(func() {
+			if id == a.requestID && dropSaved && err != nil && !errors.Is(err, context.Canceled) && strings.Contains(err.Error(), "认证失败") {
+				_ = config.DeletePassword(a.server, a.username)
+			}
 			if !a.finish(id, err) {
 				return
 			}
 			a.client = client
-			a.password = ""
 			a.pages = nil
 			a.settings.Server = a.server
 			a.settings.Username = a.username
+			saveErr := a.persistPassword()
+			a.password = ""
 			a.browse(0)
+			if saveErr != nil {
+				a.errorText = saveErr.Error()
+			}
 		})
 	}()
 }
@@ -483,7 +504,21 @@ func (a *app) control(err error) {
 		a.playback.State = player.Failed
 	}
 }
+func (a *app) persistPassword() error {
+	if a.configPath == "" {
+		return nil
+	}
+	if !a.remember {
+		return config.DeletePassword(a.server, a.username)
+	}
+	return config.SavePassword(a.server, a.username, a.password)
+}
+
 func (a *app) logout() {
+	if err := config.DeletePassword(a.server, a.username); err != nil {
+		a.errorText = err.Error()
+		return
+	}
 	a.generation++
 	a.control(a.engine.Stop())
 	a.screen = screenLogin
@@ -497,6 +532,8 @@ func (a *app) logout() {
 	a.play = newPlayback()
 	a.query = ""
 	a.password = ""
+	a.remember = true
+	a.autoLogin = false
 	a.position = 0
 	a.playback = player.Event{Generation: a.generation, State: player.Idle}
 }
@@ -801,8 +838,11 @@ func (a *app) loginView(c *ui.Context) {
 			ui.Text(c, "连接 Navidrome / Subsonic").TextColor(t.TextMuted).TextAlign(ui.Center)
 			ui.TextInput(c, &a.server).Label("服务器地址").Placeholder("https://music.example.com/navidrome").Disabled(a.busy)
 			ui.TextInput(c, &a.username).Label("用户名").Placeholder("用户名").Disabled(a.busy)
-			submitted := ui.TextInput(c, &a.password).Label("密码").Placeholder("密码（仅本次会话）").Password().Disabled(a.busy).Submitted()
-			if ui.PrimaryButton(c, "登录").Disabled(a.busy).Clicked() || submitted {
+			submitted := ui.TextInput(c, &a.password).Label("密码").Placeholder("密码").Password().Disabled(a.busy).Submitted()
+			ui.Checkbox(c, &a.remember, "记住密码").Disabled(a.busy)
+			if a.autoLogin && !a.busy && a.client == nil && a.password != "" {
+				a.login()
+			} else if ui.PrimaryButton(c, "登录").Disabled(a.busy).Clicked() || submitted {
 				a.login()
 			}
 			a.message(c)

@@ -9,6 +9,7 @@
 | github.com/ebitengine/purego | v0.11.1 | Apache-2.0；MyGO 平台调用 |
 | github.com/go-text/typesetting | v0.3.5 | BSD-3-Clause/Unlicense；字体排版 |
 | golang.org/x/image | v0.46.0 | BSD-3-Clause；封面解码和缩放 |
+| github.com/zalando/go-keyring | v0.2.8 | MIT；把密码交给系统密钥环。Linux 走 Secret Service，macOS 走登录钥匙串，Windows 走 Credential Manager |
 | Lucide repeat / repeat-1 / arrow-right / disc-3 / chevron-left / chevron-right | 2026-10-11 源文件 | ISC，版权 Lucide Icons and Contributors；播放模式图标、尚未到达的封面，以及后退和前进 |
 | libmpv | pkg-config 2.5.0，mpv 0.41.0，Arch 包 1:0.41.0-6，ABI libmpv.so.2 | 系统包声明 GPL-2.0-or-later AND LGPL-2.1-or-later；进程内音频播放 |
 | mpv client.h | 本机 2.5.0 头文件副本 `internal/player/mpv_client.h` | ISC，完整版权声明保留；C API ABI |

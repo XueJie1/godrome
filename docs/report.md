@@ -9,7 +9,7 @@
 - 已有可运行 Linux release 二进制：`build/godrome`，约 13 MiB。
 - MyGO v0.2.15 官方 native 模板；Go 业务包 + 小型 cgo/libmpv C API 适配层；无 Web UI、数据库或 mpv 子进程。
 - 功能：登录、专辑分页、专辑歌曲、歌曲搜索、队列与自动续播、暂停恢复、上下曲、进度、音量、停止/重试。
-- 封面后台缩略图、2 个下载/解码 worker、8 MiB 解码缓存；搜索取消与结果代次校验；配置和错误消息不含密码/token/认证 URL。
+- 封面后台缩略图、2 个下载/解码 worker、8 MiB 解码缓存；搜索取消与结果代次校验；JSON 配置和错误消息不含密码/token/认证 URL。2026-10-11 起，登录成功默认把密码写入系统密钥环。
 - `go vet ./...`、`go test -race ./...` 和 release 构建通过。Windows amd64/macOS arm64 无 cgo UI 构建通过；该二进制不含播放能力。三平台原生 cgo CI 已配置，本次未实际运行 Windows/macOS CI。
 
 ## 已执行的验证
