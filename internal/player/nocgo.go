@@ -27,10 +27,11 @@ const (
 func openNative(string) (*native, error) {
 	return nil, errors.New("此构建未启用 cgo，无法播放；请使用 CGO_ENABLED=1 重新构建")
 }
-func (*native) load(string) error        { return nil }
-func (*native) pause(bool) error         { return nil }
-func (*native) seek(float64) error       { return nil }
-func (*native) volume(float64) error     { return nil }
-func (*native) stop() error              { return nil }
-func (*native) close()                   {}
-func (*native) wait(float64) nativeEvent { return nativeEvent{} }
+func (*native) load(string) error         { return nil }
+func (*native) pause(bool) error          { return nil }
+func (*native) seek(float64) error        { return nil }
+func (*native) volume(float64) error      { return nil }
+func (*native) setEqualizer(string) error { return nil }
+func (*native) stop() error               { return nil }
+func (*native) close()                    {}
+func (*native) wait(float64) nativeEvent  { return nativeEvent{} }

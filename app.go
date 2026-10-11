@@ -14,6 +14,7 @@ import (
 	"godrome/internal/player"
 	"godrome/internal/subsonic"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -22,6 +23,7 @@ type playback interface {
 	Pause(bool) error
 	Seek(float64) error
 	SetVolume(float64) error
+	SetEqualizer(string) error
 	Stop() error
 	SetVisible(bool) error
 	Events() <-chan player.Event
@@ -40,6 +42,7 @@ const (
 	screenStarred
 	screenPlaylists
 	screenLocal
+	screenSettings
 )
 
 func (s screen) String() string {
@@ -60,6 +63,8 @@ func (s screen) String() string {
 		return "playlists"
 	case screenLocal:
 		return "local"
+	case screenSettings:
+		return "settings"
 	default:
 		return "login"
 	}
@@ -74,6 +79,8 @@ func (s screen) nav() string {
 		return "starred"
 	case screenPlaylists:
 		return "playlists"
+	case screenSettings:
+		return "settings"
 	default:
 		return "library"
 	}
@@ -92,6 +99,8 @@ func (s screen) legacyPage() string {
 		return "playlists"
 	case screenLocal:
 		return "local"
+	case screenSettings:
+		return "settings"
 	case screenLibrary, screenAlbum:
 		return "songs"
 	default:
@@ -135,6 +144,7 @@ type app struct {
 	playback                                   player.Event
 	generation                                 uint64
 	position, volume                           float64
+	volumeBefore                               float64
 	albumsGrid                                 ui.GridState
 	songsList, queueList                       ui.ListState
 	selectedAlbum, selectedSong, selectedQueue int
@@ -147,6 +157,17 @@ type app struct {
 	closeOnce                                  sync.Once
 	remember                                   bool
 	autoLogin                                  bool
+	accent                                     ui.Color
+	appearance                                 string
+	eq                                         eqCurve
+	eqPreset                                   eqPreset
+	eqGain                                     [eqBands]float64
+	settingsTab                                int
+	settingsScroll                             ui.ScrollState
+	accentOpen                                 bool
+	// setAppearance applies light, dark, or system. The window sets it.
+	// The UI tester leaves it empty, because that call waits for the app loop.
+	setAppearance func(mygo.ThemeSource)
 }
 
 func newApp(settings config.Settings, path string, engine playback) *app {
@@ -159,7 +180,18 @@ func newApp(settings config.Settings, path string, engine playback) *app {
 	if queue == 0 {
 		queue = queueWidthDefault
 	}
-	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}}
+	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}, accent: accentFromSettings(settings.Accent), appearance: settings.Appearance, eqPreset: eqPreset(settings.EQPreset)}
+	a.volumeBefore = settings.Volume
+	if a.volumeBefore <= 0 {
+		a.volumeBefore = 70
+	}
+	a.eq = gainsFromSettings(settings.EQGains)
+	if a.eqPreset != eqCustom {
+		a.eq = presetCurve(a.eqPreset, a.eq)
+	}
+	for i := range a.eqGain {
+		a.eqGain[i] = a.eq[i]
+	}
 	if path != "" && settings.Server != "" && settings.Username != "" {
 		if password, ok, err := config.LoadPassword(settings.Server, settings.Username); err != nil {
 			a.errorText = err.Error()
@@ -313,6 +345,8 @@ func (a *app) goTo(p place) {
 		a.showPlaceholder(screenPlaylists, "歌单")
 	case screenLocal:
 		a.screen = screenLocal
+	case screenSettings:
+		a.showSettings()
 	}
 }
 
@@ -823,23 +857,133 @@ func clockText(seconds float64) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
-// Apple Music's pink, used as the accent while the system theme still supplies
+// appleMusicPink is the default accent. The system theme still supplies
 // surfaces, text, fonts and scaling.
-func appleMusic(c *ui.Context) *ui.Theme {
-	t := *c.Theme()
-	if t.Dark {
-		t.Accent = ui.Hex("#fc3c44")
-		t.AccentHover = ui.Hex("#ff5a60")
-		t.AccentPressed = ui.Hex("#d12b36")
-		t.Focus = ui.RGBA(252, 60, 68, 0.6)
-		t.Selection = ui.RGBA(252, 60, 68, 0.35)
-	} else {
-		t.Accent = ui.Hex("#fa233b")
-		t.AccentHover = ui.Hex("#e11d34")
-		t.AccentPressed = ui.Hex("#c4162c")
-		t.Focus = ui.RGBA(250, 35, 59, 0.5)
-		t.Selection = ui.RGBA(250, 35, 59, 0.22)
+func appleMusicPink(dark bool) ui.Color {
+	if dark {
+		return ui.Hex("#fc3c44")
 	}
+	return ui.Hex("#fa233b")
+}
+
+func accentFromSettings(hex string) ui.Color {
+	if hex == "" {
+		return appleMusicPink(false)
+	}
+	return ui.Hex(hex)
+}
+
+func gainsFromSettings(gains []float64) eqCurve {
+	var curve eqCurve
+	if len(gains) != eqBands {
+		return curve
+	}
+	for i := range curve {
+		curve[i] = clampGain(gains[i])
+	}
+	return curve
+}
+
+func accentHex(c ui.Color) string {
+	return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
+}
+
+type accentSwatch struct {
+	Name  string
+	Color ui.Color
+}
+
+func accentSwatches() []accentSwatch {
+	return []accentSwatch{
+		{"粉", ui.Hex("#fa233b")},
+		{"蓝", ui.Hex("#0a84ff")},
+		{"紫", ui.Hex("#bf5af2")},
+		{"绿", ui.Hex("#30d158")},
+		{"橙", ui.Hex("#ff9f0a")},
+	}
+}
+
+func appearanceIndex(v string) int {
+	switch v {
+	case "light":
+		return 0
+	case "dark":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func appearanceValue(i int) string {
+	switch i {
+	case 0:
+		return "light"
+	case 1:
+		return "dark"
+	default:
+		return "system"
+	}
+}
+
+func appearanceHint(v string) string {
+	switch v {
+	case "light":
+		return "始终使用浅色。"
+	case "dark":
+		return "始终使用深色。"
+	default:
+		return "跟随系统的浅色或深色。"
+	}
+}
+
+// appearanceSource maps the saved choice onto MyGO. A headless test has no
+// system appearance, so 跟随系统 keeps the appearance the test already set.
+func appearanceSource(v string, systemDark bool) mygo.ThemeSource {
+	switch v {
+	case "light":
+		return mygo.ThemeLight
+	case "dark":
+		return mygo.ThemeDark
+	default:
+		if systemDark {
+			return mygo.ThemeDark
+		}
+		return mygo.ThemeLight
+	}
+}
+
+func eqPresetFromLabel(label string) eqPreset {
+	if label == "自定义" || label == "" {
+		return eqCustom
+	}
+	return eqPreset(label)
+}
+
+func eqHzLabel(hz int) string {
+	if hz >= 1000 {
+		return fmt.Sprintf("%dK", hz/1000)
+	}
+	return fmt.Sprintf("%d", hz)
+}
+
+func eqBandLabel(hz int) string {
+	return eqHzLabel(hz) + " Hz"
+}
+
+// applyTheme paints the chosen accent onto the system theme. Surfaces, text,
+// fonts and scaling still come from that theme.
+func (a *app) applyTheme(c *ui.Context) *ui.Theme {
+	t := *c.Theme()
+	base := a.accent
+	if base.A == 0 {
+		base = appleMusicPink(t.Dark)
+		a.accent = base
+	}
+	t.Accent = base
+	t.AccentHover = base.Mix(ui.Hex("#ffffff"), 0.16)
+	t.AccentPressed = base.Mix(ui.Hex("#000000"), 0.18)
+	t.Focus = ui.RGBA(base.R, base.G, base.B, 0.55)
+	t.Selection = ui.RGBA(base.R, base.G, base.B, 0.28)
 	t.AccentText = ui.Hex("#ffffff")
 	t.Radius = 10
 	c.SetTheme(&t)
@@ -888,7 +1032,7 @@ func listScrollGutter(t *ui.Theme) float32 {
 }
 
 func (a *app) view(c *ui.Context) {
-	t := appleMusic(c)
+	t := a.applyTheme(c)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		if a.screen == screenLogin {
 			a.loginView(c)
@@ -989,6 +1133,8 @@ func (a *app) mainColumn(c *ui.Context) {
 			a.starredView(c)
 		case screenPlaylists:
 			a.placeholderView(c)
+		case screenSettings:
+			a.settingsView(c)
 		default:
 			a.songView(c)
 		}
@@ -1012,6 +1158,7 @@ func (a *app) sidebar(c *ui.Context) {
 			ui.SidebarItem(c, "albums", nil, "专辑")
 			ui.SidebarItem(c, "starred", nil, "喜爱")
 			ui.SidebarItem(c, "playlists", nil, "歌单")
+			ui.SidebarItem(c, "settings", nil, "设置")
 		}).Grow(1).Changed() {
 			switch section {
 			case "library":
@@ -1024,16 +1171,252 @@ func (a *app) sidebar(c *ui.Context) {
 				a.showStarred()
 			case "playlists":
 				a.showPlaceholder(screenPlaylists, "歌单")
+			case "settings":
+				a.showSettings()
 			}
 		}
-		if a.client != nil {
-			ui.Column(c).Padding(8, 12, 14, 12).Children(func() {
-				if ui.Button(c, "退出登录").Clicked() {
-					a.logout()
+	})
+}
+
+func (a *app) showSettings() {
+	if a.pageCancel != nil {
+		a.pageCancel()
+	}
+	a.screen = screenSettings
+	a.albumName = "设置"
+	a.albumID = ""
+	a.visit()
+	a.busy = false
+	a.status = ""
+}
+
+func (a *app) settingsView(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+		ui.Text(c, "设置").FontSize(30).FontWeight(700).Padding(6, 2, 0, 2)
+		ui.Tabs(c, &a.settingsTab, "外观", "声音", "账号").Padding(0, 2, 0, 2)
+		ui.Scroll(c).Grow(1).MinHeight(120).TrackScroll(&a.settingsScroll).Children(func() {
+			ui.Column(c).Padding(16, 18, 20, 2).MaxWidth(520).Children(func() {
+				switch a.settingsTab {
+				case 1:
+					a.equalizerSection(c, t)
+				case 2:
+					a.accountSection(c, t)
+				default:
+					a.lookSection(c, t)
 				}
 			})
+		})
+	})
+}
+
+func (a *app) lookSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(22).Children(func() {
+		a.appearanceSection(c, t)
+		a.accentSection(c, t)
+	})
+}
+
+func (a *app) appearanceSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(10).Children(func() {
+		if next, ok := a.appearanceChoice(c); ok {
+			a.appearance = appearanceValue(next)
+			a.applyAppearance()
+			a.persistLook()
+		}
+		ui.Text(c, appearanceHint(a.appearance)).FontSize(12).TextColor(t.TextMuted)
+	})
+}
+
+// appearanceChoice is sun, moon, and a monitor. The labels stay so tests
+// and the keyboard can find 浅色, 深色, and 跟随系统.
+func (a *app) appearanceChoice(c *ui.Context) (int, bool) {
+	t := c.Theme()
+	glyphs := []*ui.SVG{iconSun, iconMoon, iconMonitor}
+	labels := []string{"浅色", "深色", "跟随系统"}
+	current := appearanceIndex(a.appearance)
+	picked, ok := current, false
+	ui.Row(c).Gap(8).Children(func() {
+		for i, label := range labels {
+			on := i == current
+			btn := ui.Button(c, "").Label(label).Tooltip(label)
+			if on {
+				btn.TextColor(t.Accent)
+			}
+			btn.DrawOver(func(p *ui.Painter, r ui.Rect) {
+				if on {
+					p.Fill(ui.Rect{X: r.X + 12, Y: r.Y + r.H - 3, W: r.W - 24, H: 2}, t.Accent, 1)
+				}
+			})
+			btn.Children(func() {
+				ui.Column(c).Gap(4).AlignItems(ui.Center).Padding(4, 8, 8, 8).Children(func() {
+					ui.Icon(c, glyphs[i]).Size(18, 18)
+					ui.Text(c, label).FontSize(12)
+				})
+			})
+			if btn.Clicked() {
+				picked, ok = i, true
+			}
 		}
 	})
+	return picked, ok
+}
+
+func (a *app) accentSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(10).Children(func() {
+		ui.Text(c, "主题色").FontWeight(600)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if a.accentWell(c).Changed() {
+				a.persistLook()
+			}
+			for _, swatch := range accentSwatches() {
+				color := swatch
+				on := accentHex(a.accent) == accentHex(color.Color)
+				btn := ui.Button(c, "").Label(color.Name).Tooltip(color.Name).Padding(2).Background(ui.Color{}).BorderWidth(0)
+				if on {
+					btn.Border(2, t.Text)
+				}
+				btn.Children(func() {
+					ui.Box(c).Size(18, 18).Radius(9).Background(color.Color)
+				})
+				if btn.Clicked() {
+					a.accent = color.Color
+					a.persistLook()
+				}
+			}
+			if ui.Button(c, "恢复默认").Clicked() {
+				a.accent = appleMusicPink(t.Dark)
+				a.persistLook()
+			}
+		})
+	})
+}
+
+// accentWell opens the color picker from a circle the same size as the
+// preset dots.
+func (a *app) accentWell(c *ui.Context) *ui.Element {
+	t := c.Theme()
+	well := ui.Button(c, "").Label("自定义颜色").Tooltip("自定义颜色")
+	well.Padding(0).Size(22, 22).Radius(11).Background(ui.Color{}).BorderWidth(0)
+	now := a.accent
+	well.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(r, now, r.W/2)
+		p.Stroke(r, t.Border, r.W/2, 1)
+	})
+	if well.Clicked() {
+		a.accentOpen = !a.accentOpen
+	}
+	ui.Popover(c, well, &a.accentOpen, func() {
+		if ui.ColorPicker(c, &a.accent).Changed() {
+			a.persistLook()
+		}
+	})
+	return well
+}
+
+func (a *app) equalizerSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(14).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+			ui.Text(c, "均衡器").FontWeight(600).Grow(1).Shrink(1)
+			names := make([]string, 0, len(eqPresetList()))
+			for _, p := range eqPresetList() {
+				names = append(names, eqPresetLabel(p))
+			}
+			selected := eqPresetLabel(a.eqPreset)
+			if ui.Select(c, &selected, names).Label("均衡器预设").Changed() {
+				a.eqPreset = eqPresetFromLabel(selected)
+				a.eq = presetCurve(a.eqPreset, a.eq)
+				a.syncEQGains()
+				a.applyEqualizer()
+				a.persistLook()
+			}
+		})
+		ui.Row(c).Gap(4).AlignItems(ui.End).Children(func() {
+			for i, hz := range eqFreqs {
+				band := i
+				ui.Column(c).Gap(6).AlignItems(ui.Center).Width(46).Children(func() {
+					ui.Textf(c, "%+.0f", a.eqGain[band]).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum")
+					if eqSlider(c, &a.eqGain[band]).Label(eqBandLabel(hz)).Changed() {
+						a.eqGain[band] = clampGain(a.eqGain[band])
+						a.eq[band] = a.eqGain[band]
+						a.eqPreset = eqCustom
+						a.applyEqualizer()
+						a.persistLook()
+					}
+					ui.Text(c, eqHzLabel(hz)).FontSize(11).TextColor(t.TextMuted)
+				})
+			}
+		})
+	})
+}
+
+// eqSlider is one vertical equalizer band. The low gain sits at the bottom.
+func eqSlider(c *ui.Context, value *float64) *ui.Element {
+	t := c.Theme()
+	s := ui.SliderBase(c, value, eqGainMin, eqGainMax).Vertical().Size(28, 140).PaddingY(8)
+	frac := float32((*value - eqGainMin) / (eqGainMax - eqGainMin))
+	s.Draw(func(p *ui.Painter, r ui.Rect) {
+		track := ui.Rect{X: r.X + r.W/2 - 2, Y: r.Y + 8, W: 4, H: r.H - 16}
+		p.Fill(track, t.Border, 2)
+		knob := float32(8)
+		y := track.Y + track.H - knob/2 - frac*(track.H-knob)
+		p.Fill(ui.Rect{X: r.X + (r.W-knob)/2, Y: y - knob/2, W: knob, H: knob}, t.Accent, knob/2)
+	})
+	return s
+}
+
+func (a *app) accountSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(12).MaxWidth(280).Children(func() {
+		if a.client == nil {
+			ui.Text(c, "当前未登录。").FontSize(13).TextColor(t.TextMuted)
+			return
+		}
+		if a.username != "" {
+			ui.Textf(c, "已登录 %s", a.username).TextColor(t.TextMuted)
+		}
+		if ui.Button(c, "退出登录").Clicked() {
+			a.logout()
+		}
+	})
+}
+
+func (a *app) syncEQGains() {
+	for i := range a.eqGain {
+		a.eqGain[i] = a.eq[i]
+	}
+}
+
+func (a *app) applyEqualizer() {
+	if err := a.engine.SetEqualizer(a.eq.filter()); err != nil {
+		a.errorText = err.Error()
+	}
+}
+
+func (a *app) applyAppearance() {
+	if a.setAppearance == nil {
+		return
+	}
+	switch a.appearance {
+	case "light":
+		a.setAppearance(mygo.ThemeLight)
+	case "dark":
+		a.setAppearance(mygo.ThemeDark)
+	default:
+		a.setAppearance(mygo.ThemeSystem)
+	}
+}
+
+func (a *app) persistLook() {
+	a.settings.Accent = accentHex(a.accent)
+	a.settings.Appearance = a.appearance
+	a.settings.EQPreset = string(a.eqPreset)
+	a.settings.EQGains = a.eq[:]
+	if a.configPath == "" {
+		return
+	}
+	if err := config.Save(a.configPath, a.settings); err != nil {
+		a.errorText = "保存设置失败"
+	}
 }
 
 func (a *app) historyButtons(c *ui.Context) {
@@ -1494,6 +1877,19 @@ func (a *app) iconButton(c *ui.Context, glyph *ui.SVG, label string, primary, di
 	return btn.Clicked()
 }
 
+func (a *app) toggleMute() {
+	if a.volume > 0 {
+		a.volumeBefore = a.volume
+		a.volume = 0
+	} else {
+		if a.volumeBefore <= 0 {
+			a.volumeBefore = 70
+		}
+		a.volume = a.volumeBefore
+	}
+	a.control(a.engine.SetVolume(a.volume))
+}
+
 func (a *app) controlsView(c *ui.Context) {
 	t := c.Theme()
 	song, has := a.play.queue.Current()
@@ -1569,8 +1965,20 @@ func (a *app) controlsView(c *ui.Context) {
 						ui.Icon(c, iconQueue).Size(16, 16)
 					})
 				})
-				ui.Text(c, "音量").FontSize(12).TextColor(t.TextMuted)
+				glyph, tip := iconVolume, "静音"
+				if a.volume <= 0 {
+					glyph, tip = iconVolumeMute, "取消静音"
+				}
+				mute := ui.Button(c, "").Label("静音").Tooltip(tip).Padding(2)
+				mute.Background(ui.Color{}).BorderWidth(0)
+				mute.Children(func() { ui.Icon(c, glyph).Size(16, 16).TextColor(t.TextMuted) })
+				if mute.Clicked() {
+					a.toggleMute()
+				}
 				if ui.Slider(c, &a.volume, 0, 100).Label("音量").Width(110).Changed() {
+					if a.volume > 0 {
+						a.volumeBefore = a.volume
+					}
 					a.control(a.engine.SetVolume(a.volume))
 				}
 			})

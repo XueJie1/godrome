@@ -38,6 +38,8 @@ func (p place) title() string {
 		return "歌单"
 	case screenLocal:
 		return "本地音频"
+	case screenSettings:
+		return "设置"
 	default:
 		return "Godrome"
 	}

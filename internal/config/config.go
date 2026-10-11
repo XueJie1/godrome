@@ -17,6 +17,14 @@ type Settings struct {
 	Height       int     `json:"height"`
 	SidebarWidth float32 `json:"sidebarWidth,omitempty"`
 	QueueWidth   float32 `json:"queueWidth,omitempty"`
+	// Accent is #rrggbb. Empty keeps Apple Music pink.
+	Accent string `json:"accent,omitempty"`
+	// Appearance is system, light, or dark. Empty follows the system.
+	Appearance string `json:"appearance,omitempty"`
+	// EQPreset names a curve. Empty means the gains are custom.
+	EQPreset string `json:"eqPreset,omitempty"`
+	// EQGains holds ten decibel values, low frequency first. Omitted means flat.
+	EQGains []float64 `json:"eqGains,omitempty"`
 }
 
 func Defaults() Settings { return Settings{Volume: 70, Width: 1080, Height: 720} }
@@ -48,7 +56,36 @@ func Load(path string) (Settings, error) {
 	if s.QueueWidth != 0 {
 		s.QueueWidth = max(200, min(480, s.QueueWidth))
 	}
+	if !validAccent(s.Accent) {
+		s.Accent = ""
+	}
+	switch s.Appearance {
+	case "", "system", "light", "dark":
+	default:
+		s.Appearance = ""
+	}
+	if len(s.EQGains) != 10 {
+		s.EQGains = nil
+	} else {
+		for i, g := range s.EQGains {
+			s.EQGains[i] = max(-12, min(12, g))
+		}
+	}
 	return s, nil
+}
+
+func validAccent(s string) bool {
+	if len(s) != 7 || s[0] != '#' {
+		return false
+	}
+	for _, c := range s[1:] {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 func Save(path string, s Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

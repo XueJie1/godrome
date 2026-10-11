@@ -25,12 +25,27 @@ func TestSettingsRoundTrip(t *testing.T) {
 	s.Volume = 35
 	s.SidebarWidth = 180
 	s.QueueWidth = 240
+	s.Accent = "#0a84ff"
+	s.Appearance = "dark"
+	s.EQPreset = "摇滚"
+	s.EQGains = []float64{5, 4, 2, 0, -1, -1, 1, 3, 4, 4}
 	if err := Save(p, s); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Load(p)
-	if err != nil || got != s {
-		t.Fatalf("round trip: %v", err)
+	if err != nil || got.Server != s.Server || got.Accent != s.Accent || got.Appearance != s.Appearance || got.EQPreset != s.EQPreset || len(got.EQGains) != 10 {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	bad := s
+	bad.Accent = "not-a-color"
+	bad.Appearance = "neon"
+	bad.EQGains = []float64{99}
+	if err := Save(p, bad); err != nil {
+		t.Fatal(err)
+	}
+	cleaned, err := Load(p)
+	if err != nil || cleaned.Accent != "" || cleaned.Appearance != "" || cleaned.EQGains != nil {
+		t.Fatalf("invalid look kept: %+v %v", cleaned, err)
 	}
 	b, _ := os.ReadFile(p)
 	for _, secret := range []string{"password", "token", "stream", "secret"} {

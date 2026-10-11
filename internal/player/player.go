@@ -81,8 +81,14 @@ func (p *Engine) SetVolume(value float64) error {
 	return p.send(command{kind: "volume", value: max(0, min(100, value))})
 }
 func (p *Engine) SetVisible(value bool) error { return p.send(command{kind: "visible", flag: value}) }
-func (p *Engine) Stop() error                 { return p.send(command{kind: "stop"}) }
-func (p *Engine) Close()                      { p.once.Do(p.cancel); <-p.done }
+
+// SetEqualizer replaces the libmpv audio filter chain. An empty graph removes it.
+// The worker applies it again the next time it creates the player.
+func (p *Engine) SetEqualizer(graph string) error {
+	return p.send(command{kind: "equalizer", path: graph})
+}
+func (p *Engine) Stop() error { return p.send(command{kind: "stop"}) }
+func (p *Engine) Close()      { p.once.Do(p.cancel); <-p.done }
 
 func (p *Engine) run() {
 	defer close(p.done)
@@ -96,6 +102,7 @@ func (p *Engine) run() {
 	e := Event{State: Idle}
 	volume := 70.0
 	visible := true
+	equalizer := ""
 	loaded, paused, buffering, seeking := false, false, false, false
 	entry := int64(-1)
 	lastProgress := time.Time{}
@@ -160,11 +167,24 @@ func (p *Engine) run() {
 						continue
 					}
 				}
-				fail(n.load(c.path))
+				if err := n.load(c.path); err != nil {
+					fail(err)
+					continue
+				}
+				// Apply after the file is loading. Setting af before the first
+				// loadfile makes libmpv reject that load.
+				if equalizer != "" {
+					fail(n.setEqualizer(equalizer))
+				}
 			case "volume":
 				volume = c.value
 				if n != nil {
 					fail(n.volume(volume))
+				}
+			case "equalizer":
+				equalizer = c.path
+				if n != nil {
+					fail(n.setEqualizer(equalizer))
 				}
 			case "visible":
 				visible = c.flag

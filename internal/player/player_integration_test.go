@@ -74,6 +74,18 @@ func TestFormatsPauseSeekEOFAndStream(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitFor(t, p, generation, func(e Event) bool { return e.State == Ended })
+			if i == 0 {
+				if err := p.SetEqualizer("lavfi=[equalizer=f=1000:width_type=q:w=1:g=3]"); err != nil {
+					t.Fatal(err)
+				}
+				if err := p.Load(path, generation+100); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, p, generation+100, func(e Event) bool { return e.State == Playing && e.Duration > 0 })
+				if err := p.SetEqualizer(""); err != nil {
+					t.Fatal(err)
+				}
+			}
 		})
 	}
 	// Repeated replacement must not let an old EOF end the newest file.

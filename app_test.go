@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/zalando/go-keyring"
 	"godrome/internal/config"
@@ -31,6 +32,7 @@ type fakePlayer struct {
 	generation       uint64
 	paused           bool
 	volume, position float64
+	equalizer        string
 	events           chan player.Event
 }
 
@@ -42,6 +44,7 @@ func (p *fakePlayer) Load(s string, g uint64) error {
 func (p *fakePlayer) Pause(b bool) error          { p.paused = b; return nil }
 func (p *fakePlayer) Seek(s float64) error        { p.position = s; return nil }
 func (p *fakePlayer) SetVolume(s float64) error   { p.volume = s; return nil }
+func (p *fakePlayer) SetEqualizer(s string) error { p.equalizer = s; return nil }
 func (*fakePlayer) Stop() error                   { return nil }
 func (*fakePlayer) SetVisible(bool) error         { return nil }
 func (p *fakePlayer) Events() <-chan player.Event { return p.events }
@@ -64,6 +67,107 @@ func waitUpdate(t *testing.T, updates chan func()) {
 		t.Fatal("missing UI result")
 	}
 }
+func TestSettingsLookAndEqualizer(t *testing.T) {
+	a, p, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	var applied mygo.ThemeSource
+	a.setAppearance = func(s mygo.ThemeSource) { applied = s }
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	snapshot(t, tt, "settings-look.png")
+	if err := tt.Click("自定义颜色"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("Hue") && !tt.HasText("Saturation and brightness") {
+		t.Fatalf("color picker did not open: %v open=%v", tt.Texts(), a.accentOpen)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if !tt.HasText("主题色") || !tt.HasText("声音") || !tt.HasText("账号") {
+		t.Fatalf("settings copy: %v", tt.Texts())
+	}
+	if err := tt.Click("蓝"); err != nil {
+		t.Fatal(err)
+	}
+	if a.accent != ui.Hex("#0a84ff") {
+		t.Fatalf("accent %v", a.accent)
+	}
+	if err := tt.Click("深色"); err != nil {
+		t.Fatal(err)
+	}
+	tt.SetDark(true)
+	tt.Frame()
+	snapshot(t, tt, "settings-dark.png")
+	if a.appearance != "dark" || applied != mygo.ThemeDark {
+		t.Fatalf("appearance %q applied %q", a.appearance, applied)
+	}
+	if err := tt.Click("声音"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("均衡器预设"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("摇滚"); err != nil {
+		t.Fatal(err)
+	}
+	if a.eqPreset != eqRock || a.eq != presetCurve(eqRock, eqCurve{}) || p.equalizer == "" {
+		t.Fatalf("preset %q filter %q", a.eqPreset, p.equalizer)
+	}
+	if err := tt.Click("32 Hz"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyRight)
+	if a.eqPreset != eqCustom || a.eq[0] == presetCurve(eqRock, eqCurve{})[0] {
+		t.Fatalf("band drag stayed on preset %q gain %v", a.eqPreset, a.eq[0])
+	}
+	if p.equalizer != a.eq.filter() {
+		t.Fatalf("player filter %q", p.equalizer)
+	}
+	snapshot(t, tt, "settings.png")
+	if err := tt.Click("账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("退出登录"); err != nil || a.client != nil {
+		t.Fatalf("logout: %v screen=%s", err, a.screen)
+	}
+	if a.eqPreset != eqCustom || a.accent != ui.Hex("#0a84ff") {
+		t.Fatal("logout cleared look or equalizer")
+	}
+}
+
+func TestMuteRemembersVolume(t *testing.T) {
+	a, p, _ := testApp(t)
+	a.screen = screenLibrary
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("静音"); err != nil || a.volume != 0 || p.volume != 0 {
+		t.Fatalf("mute: %v volume=%v player=%v", err, a.volume, p.volume)
+	}
+	if err := tt.Click("静音"); err != nil || a.volume != 70 || p.volume != 70 {
+		t.Fatalf("unmute: %v volume=%v", err, a.volume)
+	}
+	for range 8 {
+		if tt.Focused("音量") {
+			break
+		}
+		tt.Key(0, ui.KeyTab)
+	}
+	tt.Key(0, ui.KeyHome)
+	if a.volume != 0 {
+		t.Fatalf("drag to zero: %v", a.volume)
+	}
+	if err := tt.Click("静音"); err != nil || a.volume != 70 {
+		t.Fatalf("unmute after drag: %v volume=%v", err, a.volume)
+	}
+}
+
 func TestPlaybackLabelMatchesAcceptanceCopy(t *testing.T) {
 	labels := map[player.State]string{
 		player.Idle:      "待播放",
@@ -99,7 +203,7 @@ func TestLoginAndOnlineViews(t *testing.T) {
 	}))
 	defer s.Close()
 	a, p, updates := testApp(t)
-	tt := ui.NewTester(a.view, 1080, 720)
+	tt := ui.NewTester(a.view, 1080, 900)
 	for _, field := range []struct{ label, value string }{{"服务器地址", s.URL}, {"用户名", "user"}, {"密码", "secret"}} {
 		if err := tt.Click(field.label); err != nil {
 			t.Fatal(err)
@@ -161,6 +265,17 @@ func TestLoginAndOnlineViews(t *testing.T) {
 	tt.SetScale(1.5)
 	tt.Frame()
 	snapshot(t, tt, "dark-150.png")
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.screen != screenSettings || !tt.HasText("外观") {
+		t.Fatal("settings page missing")
+	}
+	if err := tt.Click("账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click("退出登录"); err != nil || a.client != nil || len(a.play.queue.Songs) != 0 {
 		t.Fatal("logout")
 	}
@@ -196,7 +311,7 @@ func TestSavedPasswordLogsInAgain(t *testing.T) {
 	if !a.autoLogin || a.password == "" {
 		t.Fatal("saved password was not loaded")
 	}
-	tt := ui.NewTester(a.view, 1080, 720)
+	tt := ui.NewTester(a.view, 1080, 900)
 	waitUpdate(t, updates)
 	waitUpdate(t, updates)
 	tt.Frame()
@@ -207,6 +322,13 @@ func TestSavedPasswordLogsInAgain(t *testing.T) {
 	if err != nil || strings.Contains(string(raw), "secret") {
 		t.Fatal("password written to settings")
 	}
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click("退出登录"); err != nil || a.client != nil {
 		t.Fatal(err)
 	}
@@ -791,7 +913,7 @@ func TestKeyboardLoginBrowseQueueAndControls(t *testing.T) {
 	}))
 	defer s.Close()
 	a, p, updates := testApp(t)
-	tt := ui.NewTester(a.view, 1080, 720)
+	tt := ui.NewTester(a.view, 1080, 900)
 	focus := func(label string) {
 		t.Helper()
 		for range 64 {
@@ -822,7 +944,7 @@ func TestKeyboardLoginBrowseQueueAndControls(t *testing.T) {
 		for range 64 {
 			tt.Key(0, ui.KeyTab)
 			// The native sidebar is one tab stop and uses the arrows itself.
-			if tt.Focused("曲库") || tt.Focused("专辑") || tt.Focused("喜爱") || tt.Focused("歌单") {
+			if tt.Focused("曲库") || tt.Focused("专辑") || tt.Focused("喜爱") || tt.Focused("歌单") || tt.Focused("设置") {
 				continue
 			}
 			tt.Key(0, ui.KeyDown)
@@ -868,6 +990,24 @@ func TestKeyboardLoginBrowseQueueAndControls(t *testing.T) {
 	tt.Key(0, ui.KeyRight)
 	if p.position <= 5 {
 		t.Fatal("keyboard seek failed")
+	}
+	focus("曲库")
+	for range 8 {
+		if a.screen == screenSettings {
+			break
+		}
+		tt.Key(0, ui.KeyDown)
+		tt.Frame()
+	}
+	if a.screen != screenSettings {
+		t.Fatalf("keyboard did not open settings, screen=%s", a.screen)
+	}
+	focus("外观")
+	tt.Key(0, ui.KeyRight)
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	if a.settingsTab != 2 {
+		t.Fatalf("keyboard did not open 账号, tab=%d", a.settingsTab)
 	}
 	focus("退出登录")
 	tt.Key(0, ui.KeyEnter)

@@ -44,6 +44,10 @@ func main() {
 	if len(flag.Args()) > 0 {
 		a.local(flag.Args())
 	}
+	a.setAppearance = mygo.Theme.SetSource
+	if a.appearance == "light" || a.appearance == "dark" {
+		mygo.Theme.SetSource(appearanceSource(a.appearance, false))
+	}
 	mygo.App.WhenReady(func() {
 		view := a.view
 		if *empty {
@@ -53,6 +57,7 @@ func main() {
 		a.post = win.Update
 		a.listen()
 		a.control(engine.SetVolume(settings.Volume))
+		a.applyEqualizer()
 		win.OnHide(func() { a.control(engine.SetVisible(false)) })
 		win.OnMinimize(func() { a.control(engine.SetVisible(false)) })
 		win.OnShow(func() { a.control(engine.SetVisible(true)) })

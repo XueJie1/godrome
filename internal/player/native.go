@@ -106,6 +106,11 @@ func (n *native) command(args ...string) error {
 	}
 	return nil
 }
+
+// setEqualizer replaces the audio filter chain. An empty graph removes it.
+func (n *native) setEqualizer(graph string) error {
+	return n.set("af", graph)
+}
 func (n *native) load(path string) error {
 	if err := n.set("pause", "no"); err != nil {
 		return err
