@@ -311,20 +311,15 @@ func TestHeadersDoNotRepeatTheSidebar(t *testing.T) {
 	}
 }
 
-func TestAlbumPageReturnsToTheSameAlbumPage(t *testing.T) {
+func TestAlbumPageHasNoReturnButton(t *testing.T) {
 	a, _, _ := testApp(t)
 	a.client = &subsonic.Client{}
 	a.screen = screenAlbum
-	a.pageOffset = 100
-	a.pages = []albumPage{{offset: 100, albums: []subsonic.Album{{ID: "a", Name: "测试专辑"}}}}
 	a.albumName = "测试专辑"
 	a.songs = []subsonic.Song{{ID: "1", Title: "第一首", Artist: "艺人"}}
 	tt := ui.NewTester(a.view, 1080, 720)
-	if err := tt.Click("返回专辑"); err != nil {
-		t.Fatal(err)
-	}
-	if a.screen != screenAlbums || a.pageOffset != 100 || len(a.albums) != 1 {
-		t.Fatalf("return left screen=%s offset=%d albums=%d", a.screen, a.pageOffset, len(a.albums))
+	if tt.HasText("返回专辑") {
+		t.Fatal("album page still shows a return button")
 	}
 }
 
@@ -344,6 +339,113 @@ func TestPlaceholderNamesThePageOnce(t *testing.T) {
 	// The sidebar item is the other "喜爱". The page itself says it once.
 	if n != 2 || tt.HasText("即将推出") {
 		t.Fatalf("page name shown %d times: %v", n, tt.Texts())
+	}
+}
+
+func TestHistoryButtonsReturnToThePreviousPage(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenPlaylists
+	a.albumName = "歌单"
+	a.nav.push(place{screen: screenStarred})
+	a.nav.push(place{screen: screenPlaylists})
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("后退"); err != nil {
+		t.Fatal(err)
+	}
+	if a.screen != screenStarred {
+		t.Fatalf("back left screen=%s", a.screen)
+	}
+	if err := tt.Click("前进"); err != nil {
+		t.Fatal(err)
+	}
+	if a.screen != screenPlaylists {
+		t.Fatalf("forward left screen=%s", a.screen)
+	}
+	if err := tt.Click("喜爱"); err != nil {
+		t.Fatal(err)
+	}
+	forward, ok := tt.Find("前进")
+	if !ok {
+		t.Fatal("forward button missing")
+	}
+	tt.ClickAt(forward.X+forward.W/2, forward.Y+forward.H/2)
+	if a.nav.canForward() || a.screen != screenStarred {
+		t.Fatalf("new visit kept forward: screen=%s forward=%v", a.screen, a.nav.canForward())
+	}
+}
+
+func TestSidebarDividerKeepsTheMinimum(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.sidebarWidth = 220
+	tt := ui.NewTester(a.view, 1080, 720)
+	div, ok := tt.Find("Divider")
+	if !ok {
+		t.Fatal("sidebar divider missing")
+	}
+	x, y := div.X+div.W/2, div.Y+40
+	tt.Press(x, y)
+	tt.Move(20, y)
+	tt.Release(20, y)
+	if a.sidebarWidth != sidebarMinWidth {
+		t.Fatalf("sidebar width = %v, want %v", a.sidebarWidth, sidebarMinWidth)
+	}
+	div, _ = tt.Find("Divider")
+	x, y = div.X+div.W/2, div.Y+40
+	tt.Press(x, y)
+	tt.Move(900, y)
+	tt.Release(900, y)
+	if a.sidebarWidth != sidebarMaxWidth {
+		t.Fatalf("sidebar width = %v, want %v", a.sidebarWidth, sidebarMaxWidth)
+	}
+}
+
+func TestQueueDividerKeepsTheMinimum(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.queueVisible = true
+	a.queueWidth = 280
+	tt := ui.NewTester(a.view, 1080, 720)
+	// The queue line is one DIP. Split's handle covers a few DIPs to either
+	// side, so the press is just to the right of that line.
+	x := 1080 - a.queueWidth - 1 + 2
+	y := float32(200)
+	tt.Press(x, y)
+	tt.Move(x+400, y)
+	tt.Release(x+400, y)
+	if a.queueWidth != queueMinWidth {
+		t.Fatalf("queue width = %v, want %v", a.queueWidth, queueMinWidth)
+	}
+	x = 1080 - a.queueWidth - 1 + 2
+	tt.Press(x, y)
+	tt.Move(x-400, y)
+	tt.Release(x-400, y)
+	if a.queueWidth != queueMaxWidth {
+		t.Fatalf("queue width = %v, want %v", a.queueWidth, queueMaxWidth)
+	}
+}
+
+func TestQueueColumnFollowsVisibility(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.screen = screenLibrary
+	a.queueVisible = true
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("播放队列") {
+		t.Fatalf("open queue missing: %v", tt.Texts())
+	}
+	if err := tt.Click("播放列表"); err != nil {
+		t.Fatal(err)
+	}
+	if a.queueVisible {
+		t.Fatal("queue toggle did not hide the queue")
+	}
+	a.queueVisible = false
+	closed := ui.NewTester(a.view, 1080, 720)
+	if closed.HasText("播放队列") {
+		t.Fatal("closed queue was built")
 	}
 }
 

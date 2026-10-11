@@ -16,6 +16,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	s.Server = "https://music.example.com"
 	s.Username = "user"
 	s.Volume = 35
+	s.SidebarWidth = 180
+	s.QueueWidth = 240
 	if err := Save(p, s); err != nil {
 		t.Fatal(err)
 	}

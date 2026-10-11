@@ -60,6 +60,8 @@ func main() {
 		win.OnClose(func(*mygo.CloseEvent) {
 			a.settings.Width, a.settings.Height = win.Size()
 			a.settings.Volume = a.volume
+			a.settings.SidebarWidth = a.sidebarWidth
+			a.settings.QueueWidth = a.queueWidth
 			if err := config.Save(path, a.settings); err != nil {
 				fmt.Fprintln(os.Stderr, "保存配置失败")
 			}

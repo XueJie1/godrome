@@ -9,11 +9,13 @@ import (
 
 // No password, token, stream URL, queue or API result is persisted.
 type Settings struct {
-	Server   string  `json:"server"`
-	Username string  `json:"username"`
-	Volume   float64 `json:"volume"`
-	Width    int     `json:"width"`
-	Height   int     `json:"height"`
+	Server       string  `json:"server"`
+	Username     string  `json:"username"`
+	Volume       float64 `json:"volume"`
+	Width        int     `json:"width"`
+	Height       int     `json:"height"`
+	SidebarWidth float32 `json:"sidebarWidth,omitempty"`
+	QueueWidth   float32 `json:"queueWidth,omitempty"`
 }
 
 func Defaults() Settings { return Settings{Volume: 70, Width: 1080, Height: 720} }
@@ -39,6 +41,12 @@ func Load(path string) (Settings, error) {
 	s.Volume = max(0, min(100, s.Volume))
 	s.Width = max(800, min(3840, s.Width))
 	s.Height = max(560, min(2160, s.Height))
+	if s.SidebarWidth != 0 {
+		s.SidebarWidth = max(160, min(360, s.SidebarWidth))
+	}
+	if s.QueueWidth != 0 {
+		s.QueueWidth = max(200, min(480, s.QueueWidth))
+	}
 	return s, nil
 }
 func Save(path string, s Settings) error {

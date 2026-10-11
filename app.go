@@ -134,12 +134,24 @@ type app struct {
 	selectedAlbum, selectedSong, selectedQueue int
 	queueVisible                               bool
 	sidebarWidth                               float32
+	queueWidth                                 float32
+	albumID                                    string
+	nav                                        history
+	restoring                                  bool
 	closeOnce                                  sync.Once
 }
 
 func newApp(settings config.Settings, path string, engine playback) *app {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: 220, screen: screenLogin}
+	sidebar := settings.SidebarWidth
+	if sidebar == 0 {
+		sidebar = sidebarWidthDefault
+	}
+	queue := settings.QueueWidth
+	if queue == 0 {
+		queue = queueWidthDefault
+	}
+	return &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin}
 }
 func (a *app) dispatch(fn func()) {
 	if a.ctx.Err() == nil && a.post != nil {
@@ -234,9 +246,68 @@ func (a *app) login() {
 		})
 	}()
 }
+func (a *app) here() place {
+	return place{
+		screen:     a.screen,
+		pageOffset: a.pageOffset,
+		songOffset: a.songOffset,
+		albumID:    a.albumID,
+		albumName:  a.albumName,
+		query:      a.query,
+	}
+}
+
+// visit records the screen the user just opened. Restoring a history
+// entry must not record itself.
+func (a *app) visit() {
+	if a.restoring || a.screen == screenLogin {
+		return
+	}
+	a.nav.push(a.here())
+}
+
+func (a *app) goTo(p place) {
+	a.restoring = true
+	defer func() { a.restoring = false }()
+	switch p.screen {
+	case screenLibrary:
+		a.songOffset = p.songOffset
+		a.showLibrary()
+	case screenAlbums:
+		a.browse(p.pageOffset)
+	case screenAlbum:
+		a.albumName = p.albumName
+		a.openAlbum(p.albumID)
+	case screenSearch:
+		a.query = p.query
+		a.searchNow(p.query)
+	case screenStarred:
+		a.showPlaceholder(screenStarred, "喜爱")
+	case screenPlaylists:
+		a.showPlaceholder(screenPlaylists, "歌单")
+	case screenLocal:
+		a.screen = screenLocal
+	}
+}
+
+func (a *app) goBack() {
+	p, ok := a.nav.back()
+	if ok {
+		a.goTo(p)
+	}
+}
+
+func (a *app) goForward() {
+	p, ok := a.nav.forward()
+	if ok {
+		a.goTo(p)
+	}
+}
+
 func (a *app) showLibrary() {
 	if a.client == nil {
 		a.screen = screenLocal
+		a.visit()
 		return
 	}
 	a.loadSongs(a.songOffset)
@@ -248,7 +319,9 @@ func (a *app) loadSongs(offset int) {
 	a.songOffset = max(0, offset)
 	offset = a.songOffset
 	a.albumName = ""
+	a.albumID = ""
 	a.query = ""
+	a.visit()
 	a.setupCovers(ctx)
 	client := a.client
 	go func() {
@@ -269,6 +342,8 @@ func (a *app) showPlaceholder(s screen, title string) {
 	}
 	a.screen = s
 	a.albumName = title
+	a.albumID = ""
+	a.visit()
 	a.busy = false
 	a.status = ""
 	a.errorText = ""
@@ -284,7 +359,9 @@ func (a *app) browse(offset int) {
 	a.pageOffset = max(0, offset)
 	offset = a.pageOffset
 	a.albumName = ""
+	a.albumID = ""
 	a.query = ""
+	a.visit()
 	a.setupCovers(ctx)
 	for _, p := range a.pages {
 		if p.offset == offset {
@@ -312,6 +389,8 @@ func (a *app) browse(offset int) {
 }
 func (a *app) openAlbum(id string) {
 	a.screen = screenAlbum
+	a.albumID = id
+	a.visit()
 	ctx, seq := a.beginPage()
 	a.setupCovers(ctx)
 	client := a.client
@@ -323,6 +402,7 @@ func (a *app) openAlbum(id string) {
 			}
 			a.songs = album.Songs
 			a.albumName = album.Name
+			a.nav.note(a.here())
 		})
 	}()
 }
@@ -332,7 +412,21 @@ func (a *app) search() {
 		a.browse(a.pageOffset)
 		return
 	}
+	a.searchNow(query)
+}
+
+// searchNow runs a search whose query is already chosen. The debounce
+// still applies, so a history return does not hit the server at once.
+func (a *app) searchNow(query string) {
+	if query == "" {
+		a.browse(a.pageOffset)
+		return
+	}
+	a.query = query
 	a.screen = screenSearch
+	a.albumID = ""
+	a.albumName = ""
+	a.visit()
 	ctx, id := a.beginPage()
 	client := a.client
 	a.setupCovers(ctx)
@@ -393,6 +487,8 @@ func (a *app) logout() {
 	a.generation++
 	a.control(a.engine.Stop())
 	a.screen = screenLogin
+	a.nav = history{}
+	a.albumID = ""
 	a.beginPage()
 	a.busy = false
 	a.status = ""
@@ -406,6 +502,7 @@ func (a *app) logout() {
 }
 func (a *app) local(paths []string) {
 	a.screen = screenLocal
+	a.visit()
 	for _, p := range paths {
 		abs, err := filepath.Abs(p)
 		if err != nil {
@@ -472,6 +569,35 @@ func appleMusic(c *ui.Context) *ui.Theme {
 	return c.Theme()
 }
 
+const (
+	sidebarWidthDefault = 220
+	queueWidthDefault   = 280
+	sidebarMinWidth     = 160
+	queueMinWidth       = 200
+	sidebarMaxWidth     = 360
+	queueMaxWidth       = 480
+	// motionDuration is one layout change. It is not a loop.
+	motionDuration = 180 * time.Millisecond
+)
+
+func clampWidth(v, lo, hi float32) float32 {
+	return max(lo, min(hi, v))
+}
+
+// coverEnter fades a cover in once, when its image first appears in a box
+// that was already there. MyGO skips this when the desktop asks for less motion.
+var coverEnter = ui.ElementTransition{
+	Duration: motionDuration,
+	Enter:    &ui.Motion{Opacity: 0},
+}
+
+// noticeMotion shows an error or status as it arrives, and lets it leave.
+var noticeMotion = ui.ElementTransition{
+	Duration: motionDuration,
+	Enter:    &ui.Motion{Y: -8},
+	Exit:     &ui.Motion{Opacity: 0},
+}
+
 // listScrollGutter is the room a vertical MyGO scroll thumb needs on the
 // right of a list. The thumb is painted over the content: it sits 3 DIPs
 // in from a track of width+6, and grows 2 DIPs to the left while dragged.
@@ -491,36 +617,100 @@ func (a *app) view(c *ui.Context) {
 			a.loginView(c)
 			return
 		}
-		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-			a.sidebar(c)
+		ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() {
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				a.topBar(c)
 				a.message(c)
-				ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-					ui.Column(c).Grow(1).MinWidth(0).Padding(4, 22, 8, 22).Children(func() {
-						switch a.screen {
-						case screenAlbums:
-							a.albumView(c)
-						case screenStarred, screenPlaylists:
-							a.placeholderView(c)
-						default:
-							a.songView(c)
-						}
-					})
-					if a.queueVisible {
-						ui.Column(c).Width(280).Shrink(0).Padding(12, 12, 8, 4).Children(func() { a.queueView(c) })
-					}
-				})
+				if a.queueOpen() {
+					// The value Split stores is the content width. The queue
+					// width is what is left, so the drag matches the pane on
+					// the right.
+					content := a.contentWidth(c)
+					ui.Split(c, &content, func() { a.mainColumn(c) }, func() { a.queuePane(c) }).Grow(1).MinHeight(0)
+					a.queueWidth = a.widthFromContent(c, content)
+				} else {
+					a.mainColumn(c)
+				}
 			})
-		})
+		}).Grow(1).MinHeight(0)
+		a.clampColumns(c)
 		a.controlsView(c)
 	})
 }
 
+// queueOpen reports whether the queue pane is taking part in the row.
+func (a *app) queueOpen() bool { return a.queueVisible }
+
+// contentWidth is the width Split should give the page. The inner split
+// fills the column beside the sidebar, and its divider sits inside that
+// width, so the queue is what remains.
+func (a *app) contentWidth(c *ui.Context) float32 {
+	_, after := a.columnRoom(c)
+	if after <= 1 {
+		return 400
+	}
+	return after - a.queueWidth - 1
+}
+
+// widthFromContent turns the content width Split reports back into a queue
+// width. Before the row has a size, the stored width stays.
+func (a *app) widthFromContent(c *ui.Context, content float32) float32 {
+	_, after := a.columnRoom(c)
+	if after <= 1 {
+		return a.queueWidth
+	}
+	return after - content - 1
+}
+
+// columnRoom is the window width and the width beside the sidebar divider.
+func (a *app) columnRoom(c *ui.Context) (window, afterSidebar float32) {
+	window, _ = c.Size()
+	return window, window - a.sidebarWidth - 1
+}
+
+// clampColumns keeps both panes inside their limits after a drag or a
+// resize. Split itself only keeps 40 DIPs from either edge.
+func (a *app) clampColumns(c *ui.Context) {
+	a.sidebarWidth = clampWidth(a.sidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+	_, after := a.columnRoom(c)
+	if after > 0 {
+		a.sidebarWidth = min(a.sidebarWidth, max(sidebarMinWidth, after-40))
+	}
+	if !a.queueVisible || after <= 1 {
+		a.queueWidth = clampWidth(a.queueWidth, queueMinWidth, queueMaxWidth)
+		return
+	}
+	hi := min(queueMaxWidth, after-40-1)
+	if hi < queueMinWidth {
+		hi = queueMinWidth
+	}
+	a.queueWidth = clampWidth(a.queueWidth, queueMinWidth, hi)
+}
+
+func (a *app) mainColumn(c *ui.Context) {
+	ui.Column(c).Grow(1).MinWidth(0).Padding(4, 22, 8, 22).Children(func() {
+		switch a.screen {
+		case screenAlbums:
+			a.albumView(c)
+		case screenStarred, screenPlaylists:
+			a.placeholderView(c)
+		default:
+			a.songView(c)
+		}
+	})
+}
+
+func (a *app) queuePane(c *ui.Context) {
+	ui.Column(c).Grow(1).MinWidth(0).Padding(12, 12, 8, 4).Children(func() { a.queueView(c) })
+}
+
 func (a *app) sidebar(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Width(a.sidebarWidth).Shrink(0).Background(t.Surface).Children(func() {
-		ui.Text(c, "Godrome").FontSize(20).FontWeight(700).Padding(18, 18, 8, 18)
+	ui.Column(c).Grow(1).MinWidth(0).Background(t.Surface).Children(func() {
+		ui.Row(c).Padding(14, 10, 8, 16).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Godrome").FontSize(20).FontWeight(700).Grow(1).SingleLine()
+			a.historyButtons(c)
+		})
 		section := a.screen.nav()
 		if ui.Sidebar(c, &section, func() {
 			ui.SidebarItem(c, "library", nil, "曲库")
@@ -549,6 +739,19 @@ func (a *app) sidebar(c *ui.Context) {
 			})
 		}
 	})
+}
+
+func (a *app) historyButtons(c *ui.Context) {
+	back := ui.Button(c, "").Label("后退").Tooltip("后退").Disabled(!a.nav.canBack())
+	back.Children(func() { ui.Icon(c, iconBack).Size(14, 14) })
+	if back.Clicked() {
+		a.goBack()
+	}
+	forward := ui.Button(c, "").Label("前进").Tooltip("前进").Disabled(!a.nav.canForward())
+	forward.Children(func() { ui.Icon(c, iconForward).Size(14, 14) })
+	if forward.Clicked() {
+		a.goForward()
+	}
 }
 
 func (a *app) placeholderView(c *ui.Context) {
@@ -580,7 +783,7 @@ func (a *app) message(c *ui.Context) {
 	if a.errorText == "" && a.status == "" {
 		return
 	}
-	ui.Column(c).Padding(0, 22).Gap(2).Children(func() {
+	ui.Column(c).Key("notice").Padding(0, 22).Gap(2).Transition(noticeMotion).Children(func() {
 		if a.errorText != "" {
 			ui.Text(c, a.errorText).TextColor(c.Theme().Danger)
 		}
@@ -619,7 +822,10 @@ func (a *app) coverArt(c *ui.Context, id string, size float32) {
 	}
 	box.Children(func() {
 		if bitmap != nil {
-			ui.Image(c, bitmap).Size(size, size).Fit(ui.Cover).Radius(8)
+			image := ui.Image(c, bitmap).Size(size, size).Fit(ui.Cover).Radius(8).Transition(coverEnter)
+			if id != "" {
+				image.Key(id)
+			}
 			return
 		}
 		ui.Column(c).Size(size, size).Center().Children(func() {
@@ -709,11 +915,6 @@ func (a *app) songView(c *ui.Context) {
 			}
 			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
 		})
-		if a.screen == screenAlbum {
-			if ui.Button(c, "返回专辑").Clicked() {
-				a.browse(a.pageOffset)
-			}
-		}
 	})
 	a.songsList.Selected = &a.selectedSong
 	a.songsList.Key = func(i int) any { return a.songs[i].ID }
