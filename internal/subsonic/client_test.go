@@ -44,6 +44,18 @@ func TestProtocol(t *testing.T) {
 				t.Error("query not encoded")
 			}
 			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"s"}]}}}`)
+		case "/music/prefix/rest/getStarred2.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","starred2":{"artist":[{"id":"ar","name":"艺人","starred":"2023-03-22T01:51:06Z"}],"album":[{"id":"al","name":"专辑","starred":"2023-03-22T01:51:06Z"}],"song":[{"id":"s","title":"歌曲","starred":"2023-03-27T09:45:27Z"}]}}}`)
+		case "/music/prefix/rest/star.view":
+			if q.Get("id") != "s" || q.Get("albumId") != "al" || q.Get("artistId") != "ar" {
+				t.Errorf("star params: %s", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		case "/music/prefix/rest/unstar.view":
+			if q.Get("id") != "s" || q.Get("albumId") != "" || q.Get("artistId") != "" {
+				t.Errorf("unstar params: %s", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
 		default:
 			t.Error("unexpected path")
 		}
@@ -68,6 +80,16 @@ func TestProtocol(t *testing.T) {
 	songs, err := c.Search(ctx, "空 格&")
 	if err != nil || len(songs) != 1 {
 		t.Fatalf("search: %v", err)
+	}
+	starred, err := c.Starred(ctx)
+	if err != nil || len(starred.Songs) != 1 || len(starred.Albums) != 1 || len(starred.Artists) != 1 || !starred.Songs[0].Liked() {
+		t.Fatalf("starred: %+v %v", starred, err)
+	}
+	if err = c.Star(ctx, "s", "al", "ar"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Unstar(ctx, "s", "", ""); err != nil {
+		t.Fatal(err)
 	}
 	stream, err := c.StreamURL("s")
 	if err != nil || !strings.Contains(stream, "format=raw") || !strings.Contains(stream, "/music/prefix/rest/stream.view") {

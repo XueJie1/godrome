@@ -24,16 +24,42 @@ type Song struct {
 	Artist   string  `json:"artist"`
 	Album    string  `json:"album"`
 	CoverArt string  `json:"coverArt"`
+	AlbumID  string  `json:"albumId"`
+	ArtistID string  `json:"artistId"`
+	Starred  string  `json:"starred"`
 	Duration float64 `json:"duration"`
 	// Path is only used by the explicit local playback mode.
 	Path string `json:"-"`
 }
+
+// Liked reports a server star. A non-empty starred timestamp is the Subsonic mark.
+func (s Song) Liked() bool   { return s.Starred != "" }
+func (a Album) Liked() bool  { return a.Starred != "" }
+func (a Artist) Liked() bool { return a.Starred != "" }
+
 type Album struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Artist   string `json:"artist"`
+	ArtistID string `json:"artistId"`
 	CoverArt string `json:"coverArt"`
+	Starred  string `json:"starred"`
 	Songs    []Song `json:"song"`
+}
+
+// Artist is an ID3 artist returned by getStarred2. Name is the display name.
+type Artist struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	CoverArt string `json:"coverArt"`
+	Starred  string `json:"starred"`
+}
+
+// Starred is the ID3 starred collection from getStarred2.
+type Starred struct {
+	Artists []Artist `json:"artist"`
+	Albums  []Album  `json:"album"`
+	Songs   []Song   `json:"song"`
 }
 type response struct {
 	Status string `json:"status"`
@@ -47,6 +73,7 @@ type response struct {
 	Search struct {
 		Songs []Song `json:"song"`
 	} `json:"searchResult3"`
+	Starred Starred `json:"starred2"`
 }
 
 type Client struct {
@@ -167,6 +194,39 @@ func (c *Client) Songs(ctx context.Context, offset int) ([]Song, error) {
 	})
 	return r.Search.Songs, err
 }
+
+// Starred returns the current user's starred songs, albums, and artists, organized by ID3 tags.
+func (c *Client) Starred(ctx context.Context) (Starred, error) {
+	r, err := c.call(ctx, "getStarred2", nil)
+	return r.Starred, err
+}
+
+// Star marks a song, album, or artist. At least one id must be set. Song ids use id, album ids use albumId, and artist ids use artistId.
+func (c *Client) Star(ctx context.Context, songID, albumID, artistID string) error {
+	_, err := c.call(ctx, "star", starParams(songID, albumID, artistID))
+	return err
+}
+
+// Unstar removes a star. The parameters match Star.
+func (c *Client) Unstar(ctx context.Context, songID, albumID, artistID string) error {
+	_, err := c.call(ctx, "unstar", starParams(songID, albumID, artistID))
+	return err
+}
+
+func starParams(songID, albumID, artistID string) url.Values {
+	q := url.Values{}
+	if songID != "" {
+		q.Set("id", songID)
+	}
+	if albumID != "" {
+		q.Set("albumId", albumID)
+	}
+	if artistID != "" {
+		q.Set("artistId", artistID)
+	}
+	return q
+}
+
 func (c *Client) StreamURL(id string) (string, error) {
 	return c.endpoint("stream", url.Values{"id": {id}, "format": {"raw"}})
 }

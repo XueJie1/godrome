@@ -107,20 +107,25 @@ type app struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	// post always schedules on Window.Update in production; the view only mutates main-thread state.
-	post                                       func(func())
-	engine                                     playback
-	client                                     *subsonic.Client
-	settings                                   config.Settings
-	configPath                                 string
-	server, username, password, query          string
-	status, errorText                          string
-	busy                                       bool
-	screen                                     screen
-	pageOffset, songOffset                     int
-	pages                                      []albumPage
-	albums                                     []subsonic.Album
-	songs                                      []subsonic.Song
-	albumName                                  string
+	post                              func(func())
+	engine                            playback
+	client                            *subsonic.Client
+	settings                          config.Settings
+	configPath                        string
+	server, username, password, query string
+	status, errorText                 string
+	busy                              bool
+	screen                            screen
+	pageOffset, songOffset            int
+	pages                             []albumPage
+	albums                            []subsonic.Album
+	songs                             []subsonic.Song
+	artists                           []subsonic.Artist
+	albumName                         string
+	// likedSongs and likedAlbums are the session copy of server stars.
+	// They are not written to settings.
+	likedSongs                                 map[string]bool
+	likedAlbums                                map[string]bool
 	more                                       bool
 	pageCancel                                 context.CancelFunc
 	pageCtx                                    context.Context
@@ -154,7 +159,7 @@ func newApp(settings config.Settings, path string, engine playback) *app {
 	if queue == 0 {
 		queue = queueWidthDefault
 	}
-	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true}
+	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}}
 	if path != "" && settings.Server != "" && settings.Username != "" {
 		if password, ok, err := config.LoadPassword(settings.Server, settings.Username); err != nil {
 			a.errorText = err.Error()
@@ -303,7 +308,7 @@ func (a *app) goTo(p place) {
 		a.query = p.query
 		a.searchNow(p.query)
 	case screenStarred:
-		a.showPlaceholder(screenStarred, "喜爱")
+		a.showStarred()
 	case screenPlaylists:
 		a.showPlaceholder(screenPlaylists, "歌单")
 	case screenLocal:
@@ -353,6 +358,232 @@ func (a *app) loadSongs(offset int) {
 			}
 			a.songs = songs
 			a.more = len(songs) == subsonic.PageSize
+		})
+	}()
+}
+
+func (a *app) showStarred() {
+	if a.client == nil {
+		a.showPlaceholder(screenStarred, "喜爱")
+		return
+	}
+	a.screen = screenStarred
+	a.albumName = "喜爱"
+	a.albumID = ""
+	a.query = ""
+	a.artists = nil
+	a.visit()
+	ctx, id := a.beginPage()
+	a.setupCovers(ctx)
+	client := a.client
+	go func() {
+		starred, err := client.Starred(ctx)
+		a.dispatch(func() {
+			if !a.finish(id, err) {
+				return
+			}
+			a.songs = starred.Songs
+			a.albums = starred.Albums
+			a.artists = starred.Artists
+			a.noteStars(starred)
+		})
+	}()
+}
+
+// noteStars records the ids getStarred2 just returned. It does not drop
+// stars learned from another page in this session.
+func (a *app) noteStars(starred subsonic.Starred) {
+	if a.likedSongs == nil {
+		a.likedSongs = map[string]bool{}
+	}
+	if a.likedAlbums == nil {
+		a.likedAlbums = map[string]bool{}
+	}
+	for _, song := range starred.Songs {
+		if song.ID != "" {
+			a.likedSongs[song.ID] = true
+		}
+	}
+	for _, album := range starred.Albums {
+		if album.ID != "" {
+			a.likedAlbums[album.ID] = true
+		}
+	}
+}
+
+func (a *app) songLiked(song subsonic.Song) bool {
+	if song.Path != "" || song.ID == "" {
+		return false
+	}
+	if song.Liked() {
+		return true
+	}
+	return a.likedSongs[song.ID]
+}
+
+func (a *app) albumLiked(album subsonic.Album) bool {
+	if album.ID == "" {
+		return false
+	}
+	if album.Liked() {
+		return true
+	}
+	return a.likedAlbums[album.ID]
+}
+
+// setSongStar writes a song star and keeps the session copy in step.
+// A failed write restores the previous mark.
+func (a *app) setSongStar(song subsonic.Song, on bool) {
+	if a.client == nil || song.Path != "" || song.ID == "" || a.songLiked(song) == on {
+		return
+	}
+	if a.likedSongs == nil {
+		a.likedSongs = map[string]bool{}
+	}
+	a.likedSongs[song.ID] = on
+	a.applySongStar(song.ID, on)
+	client := a.client
+	id := song.ID
+	go func() {
+		var err error
+		if on {
+			err = client.Star(a.ctx, id, "", "")
+		} else {
+			err = client.Unstar(a.ctx, id, "", "")
+		}
+		a.dispatch(func() {
+			if a.client != client {
+				return
+			}
+			if err == nil || errors.Is(err, context.Canceled) {
+				if err == nil && !on && a.screen == screenStarred {
+					a.dropStarredSong(id)
+				}
+				return
+			}
+			a.likedSongs[id] = !on
+			a.applySongStar(id, !on)
+			a.errorText = err.Error()
+		})
+	}()
+}
+
+func (a *app) applySongStar(id string, on bool) {
+	mark := ""
+	if on {
+		mark = "1"
+	}
+	for i := range a.songs {
+		if a.songs[i].ID == id {
+			a.songs[i].Starred = mark
+		}
+	}
+}
+
+func (a *app) dropStarredSong(id string) {
+	kept := a.songs[:0]
+	for _, song := range a.songs {
+		if song.ID != id {
+			kept = append(kept, song)
+		}
+	}
+	a.songs = kept
+}
+
+func (a *app) setAlbumStar(album subsonic.Album, on bool) {
+	if a.client == nil || album.ID == "" || a.albumLiked(album) == on {
+		return
+	}
+	if a.likedAlbums == nil {
+		a.likedAlbums = map[string]bool{}
+	}
+	a.likedAlbums[album.ID] = on
+	for i := range a.albums {
+		if a.albums[i].ID == album.ID {
+			if on {
+				a.albums[i].Starred = "1"
+			} else {
+				a.albums[i].Starred = ""
+			}
+		}
+	}
+	client := a.client
+	id := album.ID
+	go func() {
+		var err error
+		if on {
+			err = client.Star(a.ctx, "", id, "")
+		} else {
+			err = client.Unstar(a.ctx, "", id, "")
+		}
+		a.dispatch(func() {
+			if a.client != client {
+				return
+			}
+			if err == nil || errors.Is(err, context.Canceled) {
+				if err == nil && !on && a.screen == screenStarred {
+					a.dropStarredAlbum(id)
+				}
+				return
+			}
+			a.likedAlbums[id] = !on
+			for i := range a.albums {
+				if a.albums[i].ID == id {
+					if on {
+						a.albums[i].Starred = ""
+					} else {
+						a.albums[i].Starred = "1"
+					}
+				}
+			}
+			a.errorText = err.Error()
+		})
+	}()
+}
+
+func (a *app) dropStarredAlbum(id string) {
+	kept := a.albums[:0]
+	for _, album := range a.albums {
+		if album.ID != id {
+			kept = append(kept, album)
+		}
+	}
+	a.albums = kept
+}
+
+func (a *app) setArtistStar(artist subsonic.Artist, on bool) {
+	if a.client == nil || artist.ID == "" || artist.Liked() == on {
+		return
+	}
+	client := a.client
+	id := artist.ID
+	if !on {
+		kept := a.artists[:0]
+		for _, item := range a.artists {
+			if item.ID != id {
+				kept = append(kept, item)
+			}
+		}
+		a.artists = kept
+	}
+	go func() {
+		var err error
+		if on {
+			err = client.Star(a.ctx, "", "", id)
+		} else {
+			err = client.Unstar(a.ctx, "", "", id)
+		}
+		a.dispatch(func() {
+			if a.client != client {
+				return
+			}
+			if err == nil || errors.Is(err, context.Canceled) {
+				return
+			}
+			a.errorText = err.Error()
+			if a.screen == screenStarred {
+				a.showStarred()
+			}
 		})
 	}()
 }
@@ -423,6 +654,12 @@ func (a *app) openAlbum(id string) {
 			}
 			a.songs = album.Songs
 			a.albumName = album.Name
+			if a.likedAlbums == nil {
+				a.likedAlbums = map[string]bool{}
+			}
+			if album.ID != "" {
+				a.likedAlbums[album.ID] = album.Liked()
+			}
 			a.nav.note(a.here())
 		})
 	}()
@@ -529,6 +766,9 @@ func (a *app) logout() {
 	a.status = ""
 	a.client = nil
 	a.pages = nil
+	a.likedSongs = map[string]bool{}
+	a.likedAlbums = map[string]bool{}
+	a.artists = nil
 	a.play = newPlayback()
 	a.query = ""
 	a.password = ""
@@ -699,6 +939,22 @@ func (a *app) widthFromContent(c *ui.Context, content float32) float32 {
 	return after - content - 1
 }
 
+// pageWidth is the album or song page inside the main column padding.
+// The view context reports the window, so this uses the same split widths
+// the layout stores.
+func (a *app) pageWidth(c *ui.Context) float32 {
+	_, after := a.columnRoom(c)
+	page := after
+	if a.queueOpen() && after > 1 {
+		page = a.contentWidth(c)
+	}
+	page -= 44
+	if page < 48 {
+		return 48
+	}
+	return page
+}
+
 // columnRoom is the window width and the width beside the sidebar divider.
 func (a *app) columnRoom(c *ui.Context) (window, afterSidebar float32) {
 	window, _ = c.Size()
@@ -729,7 +985,9 @@ func (a *app) mainColumn(c *ui.Context) {
 		switch a.screen {
 		case screenAlbums:
 			a.albumView(c)
-		case screenStarred, screenPlaylists:
+		case screenStarred:
+			a.starredView(c)
+		case screenPlaylists:
 			a.placeholderView(c)
 		default:
 			a.songView(c)
@@ -763,7 +1021,7 @@ func (a *app) sidebar(c *ui.Context) {
 					a.browse(a.pageOffset)
 				}
 			case "starred":
-				a.showPlaceholder(screenStarred, "喜爱")
+				a.showStarred()
 			case "playlists":
 				a.showPlaceholder(screenPlaylists, "歌单")
 			}
@@ -789,6 +1047,68 @@ func (a *app) historyButtons(c *ui.Context) {
 	if forward.Clicked() {
 		a.goForward()
 	}
+}
+
+func (a *app) starredView(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Grow(1).Children(func() {
+		ui.Row(c).AlignItems(ui.End).Padding(6, 2, 12, 2).Children(func() {
+			ui.Text(c, "喜爱").FontSize(30).FontWeight(700).Grow(1)
+			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
+		})
+		if !a.busy && len(a.artists) == 0 && len(a.albums) == 0 && len(a.songs) == 0 {
+			ui.Text(c, "还没有喜爱。在歌曲或专辑上标记喜欢。").TextColor(t.TextMuted).Padding(8, 2, 12, 2)
+		}
+		if len(a.artists) > 0 {
+			ui.Text(c, "艺人").FontSize(13).FontWeight(700).Padding(4, 2, 8, 2)
+			ui.ScrollHorizontal(c).Gap(8).Shrink(0).Padding(0, 2, 12, 2).Children(func() {
+				for _, artist := range a.artists {
+					item := artist
+					label := item.Name
+					if label == "" {
+						label = "未知艺人"
+					}
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(4, 8).Radius(8).Background(t.SurfaceHover).Children(func() {
+						ui.Text(c, label).SingleLine()
+						if ui.Button(c, "").Label("取消喜欢 " + label).Tooltip("取消喜欢").Children(func() {
+							ui.Icon(c, iconHeartOn).Size(12, 12).TextColor(t.Accent)
+						}).Clicked() {
+							a.setArtistStar(item, false)
+						}
+					})
+				}
+			})
+		}
+		if len(a.albums) > 0 {
+			ui.Text(c, "专辑").FontSize(13).FontWeight(700).Padding(4, 2, 8, 2)
+			openID := ""
+			ui.ScrollHorizontal(c).Gap(12).Shrink(0).Padding(0, 2, 12, 2).Children(func() {
+				for _, album := range a.albums {
+					item := album
+					ui.Column(c).Width(148).Gap(6).Children(func() {
+						card := ui.Column(c).Gap(6).Cursor(ui.CursorPointer)
+						card.Children(func() {
+							a.coverArt(c, item.CoverArt, 132)
+							ui.Text(c, item.Name).FontWeight(600).SingleLine()
+							artist := item.Artist
+							if artist == "" {
+								artist = "未知艺人"
+							}
+							ui.Text(c, artist).FontSize(12).TextColor(t.TextMuted).SingleLine()
+						})
+						if card.Clicked() {
+							openID = item.ID
+						}
+						a.albumStarButton(c, item)
+					})
+				}
+			})
+			if openID != "" {
+				a.openAlbum(openID)
+			}
+		}
+		a.songList(c, "歌曲")
+	})
 }
 
 func (a *app) placeholderView(c *ui.Context) {
@@ -874,6 +1194,37 @@ func (a *app) coverArt(c *ui.Context, id string, size float32) {
 	})
 }
 
+// heartButton is a like mark with no resting face. The label stays so tests
+// and keyboard focus can find it.
+func (a *app) heartButton(c *ui.Context, label string, liked bool, size float32) bool {
+	glyph := iconHeart
+	if liked {
+		glyph = iconHeartOn
+	}
+	btn := ui.Button(c, "").Label(label).Tooltip(label)
+	btn.Background(ui.Color{}).BorderWidth(0).Padding(2).Shrink(0)
+	return btn.Children(func() {
+		icon := ui.Icon(c, glyph).Size(size, size)
+		if liked {
+			icon.TextColor(c.Theme().Accent)
+		}
+	}).Clicked()
+}
+
+func (a *app) albumStarButton(c *ui.Context, album subsonic.Album) {
+	if a.client == nil || album.ID == "" {
+		return
+	}
+	liked := a.albumLiked(album)
+	label := "喜欢 " + album.Name
+	if liked {
+		label = "取消喜欢 " + album.Name
+	}
+	if a.heartButton(c, label, liked, 14) {
+		a.setAlbumStar(album, !liked)
+	}
+}
+
 func (a *app) albumView(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).AlignItems(ui.End).Padding(6, 2, 12, 2).Children(func() {
@@ -944,22 +1295,60 @@ func (a *app) songView(c *ui.Context) {
 	if len(a.songs) > 0 {
 		cover = a.songs[0].CoverArt
 	}
-	ui.Row(c).Gap(18).AlignItems(ui.End).Padding(8, 2, 16, 2).Children(func() {
-		if a.screen != screenLocal && !library {
-			a.coverArt(c, cover, 148)
+	header := func() {
+		ui.Text(c, title).FontSize(30).FontWeight(700).SingleLine()
+		if a.screen == screenAlbum && a.albumID != "" {
+			a.albumStarButton(c, subsonic.Album{ID: a.albumID, Name: title})
 		}
-		ui.Column(c).Grow(1).Gap(4).Children(func() {
-			ui.Text(c, title).FontSize(30).FontWeight(700).SingleLine()
-			if artist != "" {
-				ui.Text(c, artist).TextColor(t.TextMuted)
-			}
-			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
+		if artist != "" {
+			ui.Text(c, artist).TextColor(t.TextMuted)
+		}
+		ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
+	}
+	showCover := a.screen != screenLocal && !library
+	// Row padding, the gap, and room for the title plus the heart.
+	stacked := showCover && a.pageWidth(c) < 148+18+96
+	if stacked {
+		coverSize := min(float32(148), max(float32(72), a.pageWidth(c)-4))
+		ui.Column(c).Gap(12).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+			a.coverArt(c, cover, coverSize)
+			ui.Column(c).MinWidth(0).Gap(4).Children(header)
 		})
-	})
+	} else {
+		ui.Row(c).Gap(18).AlignItems(ui.End).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+			if showCover {
+				a.coverArt(c, cover, 148)
+			}
+			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(header)
+		})
+	}
+	a.songList(c, "")
+	if library {
+		ui.Row(c).Gap(8).Padding(10, 0, 4, 0).Children(func() {
+			if ui.Button(c, "上一页").Disabled(a.busy || a.songOffset == 0).Clicked() {
+				a.loadSongs(a.songOffset - subsonic.PageSize)
+			}
+			if ui.Button(c, "下一页").Disabled(a.busy || !a.more).Clicked() {
+				a.loadSongs(a.songOffset + subsonic.PageSize)
+			}
+		})
+	}
+}
+
+// songList is the virtual song list. emptyTitle is the copy shown when the
+// page has no songs and is not still loading. An empty emptyTitle keeps
+// the existing "没有歌曲" copy used by album, search, and library pages.
+func (a *app) songList(c *ui.Context, emptyTitle string) {
+	t := c.Theme()
 	a.songsList.Selected = &a.selectedSong
 	a.songsList.Key = func(i int) any { return a.songs[i].ID }
 	a.songsList.Label = func(i int) string { return a.songs[i].Title }
 	play, add := -1, -1
+	type starChange struct {
+		index int
+		on    bool
+	}
+	star := starChange{index: -1}
 	// The scroll thumb is painted over the row. Right padding keeps the
 	// selection highlight clear of it.
 	list := ui.List(c, &a.songsList, len(a.songs), func(i int) {
@@ -968,7 +1357,10 @@ func (a *app) songView(c *ui.Context) {
 		if current, ok := a.play.queue.Current(); ok && current.ID == song.ID && a.play.queue.Index >= 0 {
 			playing = a.playback.State == player.Playing || a.playback.State == player.Paused || a.playback.State == player.Buffering
 		}
-		ui.Row(c).Padding(7, 8).Gap(12).AlignItems(ui.Center).Children(func() {
+		// The list keeps a gutter so the selection highlight clears the
+		// scrollbar. The two actions sit in that gutter, against the edge.
+		gutter := listScrollGutter(t)
+		ui.Row(c).Padding(7, 0, 7, 8).Gap(12).AlignItems(ui.Center).Children(func() {
 			mark := fmt.Sprintf("%d", i+1)
 			if playing {
 				mark = "▶"
@@ -987,42 +1379,62 @@ func (a *app) songView(c *ui.Context) {
 					artist.TextColor(t.AccentText.Alpha(0.82))
 				}
 			})
-			ui.Text(c, clockText(song.Duration)).TextColor(t.TextMuted).FontFeatures("tnum")
-			index := i
-			ui.Toolbar(c, func() {
-				ui.Button(c, "").Label("更多").Tooltip("更多").Menu(func(m *ui.Menu) {
+			ui.Text(c, clockText(song.Duration)).TextColor(t.TextMuted).FontFeatures("tnum").Shrink(1).MinWidth(0)
+			// The list gutter is wider than these two buttons. Pull them by
+			// what is left, so the last icon meets the list's right edge.
+			pull := gutter - 40
+			if pull < 0 {
+				pull = 0
+			}
+			ui.Row(c).Gap(0).Margin(0, -pull, 0, 0).AlignItems(ui.Center).Shrink(0).Children(func() {
+				index := i
+				liked := a.songLiked(song)
+				heartLabel := "喜欢"
+				if liked {
+					heartLabel = "取消喜欢"
+				}
+				if song.Path == "" && a.client != nil && a.heartButton(c, heartLabel, liked, 14) {
+					star = starChange{index: index, on: !liked}
+				}
+				more := ui.Button(c, "").Label("更多").Tooltip("更多")
+				more.Background(ui.Color{}).BorderWidth(0).Padding(2)
+				more.Menu(func(m *ui.Menu) {
 					if m.Item("播放").Chosen() {
 						play = index
 					}
 					if m.Item("加入队列").Chosen() {
 						add = index
 					}
-				}).Children(func() { ui.Icon(c, iconMore).Size(16, 16) })
+					if song.Path == "" && a.client != nil {
+						label := "喜欢"
+						if liked {
+							label = "取消喜欢"
+						}
+						if m.Item(label).Chosen() {
+							star = starChange{index: index, on: !liked}
+						}
+					}
+				}).Children(func() { ui.Icon(c, iconMore).Size(14, 14) })
 			})
 		})
 	}).Padding(0, listScrollGutter(t), 0, 0).Grow(1).Children(func() {
-		if !a.busy && len(a.songs) == 0 {
+		if !a.busy && len(a.songs) == 0 && emptyTitle != "" {
+			ui.Text(c, emptyTitle).TextColor(t.TextMuted).Padding(12)
+		} else if !a.busy && len(a.songs) == 0 {
 			ui.Text(c, "没有歌曲").TextColor(t.TextMuted).Padding(12)
 		}
 	})
 	if list.Submitted() {
 		play = a.selectedSong
 	}
-	if add >= 0 {
+	if add >= 0 && add < len(a.songs) {
 		a.play.queue.Add(a.songs[add])
+	}
+	if star.index >= 0 && star.index < len(a.songs) {
+		a.setSongStar(a.songs[star.index], star.on)
 	}
 	if play >= 0 {
 		a.playSongs(play)
-	}
-	if library {
-		ui.Row(c).Gap(8).Padding(10, 0, 4, 0).Children(func() {
-			if ui.Button(c, "上一页").Disabled(a.busy || a.songOffset == 0).Clicked() {
-				a.loadSongs(a.songOffset - subsonic.PageSize)
-			}
-			if ui.Button(c, "下一页").Disabled(a.busy || !a.more).Clicked() {
-				a.loadSongs(a.songOffset + subsonic.PageSize)
-			}
-		})
 	}
 }
 

@@ -412,26 +412,184 @@ func TestAlbumPageHasNoReturnButton(t *testing.T) {
 
 func TestPlaceholderNamesThePageOnce(t *testing.T) {
 	a, _, _ := testApp(t)
-	a.showPlaceholder(screenStarred, "喜爱")
+	a.showPlaceholder(screenPlaylists, "歌单")
 	tt := ui.NewTester(a.view, 1080, 720)
 	if !tt.HasText("还没有这一页。从左侧回到曲库。") {
 		t.Fatalf("placeholder copy missing: %v", tt.Texts())
 	}
 	n := 0
 	for _, text := range tt.Texts() {
-		if text == "喜爱" || text == "即将推出" {
+		if text == "歌单" || text == "即将推出" {
 			n++
 		}
 	}
-	// The sidebar item is the other "喜爱". The page itself says it once.
+	// The sidebar item is the other "歌单". The page itself says it once.
 	if n != 2 || tt.HasText("即将推出") {
 		t.Fatalf("page name shown %d times: %v", n, tt.Texts())
 	}
 }
 
+func TestStarWritesAndStarredPageReads(t *testing.T) {
+	var starred, unstarred atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/rest/getStarred2.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","starred2":{"artist":[{"id":"ar","name":"艺人","starred":"2023-03-22T01:51:06Z"}],"album":[{"id":"al","name":"喜爱专辑","artist":"艺人","starred":"2023-03-22T01:51:06Z"}],"song":[{"id":"s","title":"喜爱歌曲","artist":"艺人","starred":"2023-03-27T09:45:27Z"}]}}}`)
+		case "/rest/getAlbumList2.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"al","name":"喜爱专辑","artist":"艺人"}]}}}`)
+		case "/rest/star.view":
+			if q.Get("id") != "local-song" || q.Get("albumId") != "" {
+				t.Errorf("star query: %s", r.URL.RawQuery)
+			}
+			starred.Add(1)
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		case "/rest/unstar.view":
+			if q.Get("albumId") != "al" && q.Get("artistId") != "ar" && q.Get("id") != "s" {
+				t.Errorf("unstar query: %s", r.URL.RawQuery)
+			}
+			unstarred.Add(1)
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer s.Close()
+	client, err := subsonic.New(s.URL, "user", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, updates := testApp(t)
+	a.client = client
+	a.screen = screenLibrary
+	a.songs = []subsonic.Song{{ID: "local-song", Title: "第一首", Artist: "艺人"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	if starred.Load() != 1 || !a.likedSongs["local-song"] {
+		t.Fatalf("star did not stick: calls=%d liked=%v", starred.Load(), a.likedSongs)
+	}
+	if err := tt.Click("喜爱"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	tt.Frame()
+	if a.screen != screenStarred || !tt.HasText("喜爱歌曲") || !tt.HasText("喜爱专辑") || !tt.HasText("艺人") {
+		t.Fatalf("starred page: screen=%s texts=%v", a.screen, tt.Texts())
+	}
+	if err := tt.Click("取消喜欢 艺人"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	if unstarred.Load() != 1 || len(a.artists) != 0 {
+		t.Fatalf("artist unstar: calls=%d artists=%v", unstarred.Load(), a.artists)
+	}
+	if err := tt.Click("取消喜欢 喜爱专辑"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	tt.Frame()
+	if unstarred.Load() != 2 || tt.HasText("喜爱专辑") {
+		t.Fatalf("album stayed after unstar: calls=%d texts=%v", unstarred.Load(), tt.Texts())
+	}
+	if err := tt.Click("取消喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	tt.Frame()
+	if unstarred.Load() != 3 || tt.HasText("喜爱歌曲") {
+		t.Fatalf("song stayed after unstar: calls=%d texts=%v", unstarred.Load(), tt.Texts())
+	}
+}
+
+func TestStarFailureRestoresTheMark(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer s.Close()
+	client, err := subsonic.New(s.URL, "user", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, updates := testApp(t)
+	a.client = client
+	a.screen = screenLibrary
+	a.songs = []subsonic.Song{{ID: "s", Title: "第一首", Artist: "艺人", Starred: "2023-03-27T09:45:27Z"}}
+	a.likedSongs = map[string]bool{"s": true}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if err := tt.Click("取消喜欢"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	tt.Frame()
+	if !a.likedSongs["s"] || !tt.HasText("HTTP 503") || !tt.HasText("取消喜欢") {
+		t.Fatalf("failed unstar did not restore: liked=%v error=%q texts=%v", a.likedSongs, a.errorText, tt.Texts())
+	}
+}
+
+func TestAlbumStarSitsUnderTheTitle(t *testing.T) {
+	var albumID atomic.Value
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/star.view":
+			albumID.Store(r.URL.Query().Get("albumId"))
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer s.Close()
+	client, err := subsonic.New(s.URL, "user", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, updates := testApp(t)
+	a.client = client
+	a.screen = screenAlbums
+	a.albums = []subsonic.Album{{ID: "al", Name: "测试专辑", Artist: "艺人"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if tt.HasText("喜欢 测试专辑") {
+		t.Fatal("album grid still shows a like button")
+	}
+	a.screen = screenAlbum
+	a.albumID = "al"
+	a.albumName = "测试专辑"
+	a.songs = []subsonic.Song{{ID: "1", Title: "第一首", Artist: "艺人"}}
+	tt.Frame()
+	title, ok := tt.Find("测试专辑")
+	if !ok {
+		t.Fatal("album title missing")
+	}
+	heart, ok := tt.Find("喜欢 测试专辑")
+	if !ok || heart.Y <= title.Y {
+		t.Fatalf("like button is not under the title: title=%+v heart=%+v ok=%v", title, heart, ok)
+	}
+	if err := tt.Click("喜欢 测试专辑"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	if a.screen != screenAlbum || albumID.Load() != "al" || !a.likedAlbums["al"] {
+		t.Fatalf("album star missed: screen=%s id=%v liked=%v", a.screen, albumID.Load(), a.likedAlbums)
+	}
+}
+
 func TestHistoryButtonsReturnToThePreviousPage(t *testing.T) {
-	a, _, _ := testApp(t)
-	a.client = &subsonic.Client{}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/getStarred2.view" {
+			w.WriteHeader(404)
+			return
+		}
+		fmt.Fprint(w, `{"subsonic-response":{"status":"ok","starred2":{}}}`)
+	}))
+	defer s.Close()
+	client, err := subsonic.New(s.URL, "user", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, updates := testApp(t)
+	a.client = client
 	a.screen = screenPlaylists
 	a.albumName = "歌单"
 	a.nav.push(place{screen: screenStarred})
@@ -440,6 +598,7 @@ func TestHistoryButtonsReturnToThePreviousPage(t *testing.T) {
 	if err := tt.Click("后退"); err != nil {
 		t.Fatal(err)
 	}
+	waitUpdate(t, updates)
 	if a.screen != screenStarred {
 		t.Fatalf("back left screen=%s", a.screen)
 	}
@@ -452,6 +611,7 @@ func TestHistoryButtonsReturnToThePreviousPage(t *testing.T) {
 	if err := tt.Click("喜爱"); err != nil {
 		t.Fatal(err)
 	}
+	waitUpdate(t, updates)
 	forward, ok := tt.Find("前进")
 	if !ok {
 		t.Fatal("forward button missing")
