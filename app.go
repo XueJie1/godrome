@@ -1586,6 +1586,9 @@ func (a *app) heartButton(c *ui.Context, label string, liked bool, size float32)
 	}
 	btn := ui.Button(c, "").Label(label).Tooltip(label)
 	btn.Background(ui.Color{}).BorderWidth(0).Padding(2).Shrink(0)
+	// A column stretches a row button to its width and the button centers
+	// its icon. Size it to the icon so the album header keeps it at the start.
+	btn.Width(size + 4)
 	return btn.Children(func() {
 		icon := ui.Icon(c, glyph).Size(size, size)
 		if liked {
@@ -1620,7 +1623,9 @@ func (a *app) albumView(c *ui.Context) {
 	openID := ""
 	grid := ui.GridView(c, &a.albumsGrid, len(a.albums), 188, 268, func(i int) {
 		album := a.albums[i]
-		card := ui.Column(c).Padding(8, 8, 6, 8).Gap(8).Cursor(ui.CursorPointer)
+		// The selection fills the cell. The cover is a fixed square, so the
+		// card stays as wide as the cover and centers in the leftover width.
+		card := ui.Column(c).Width(172).AlignSelf(ui.Center).Padding(8, 0, 6, 0).Gap(8).Cursor(ui.CursorPointer)
 		card.Children(func() {
 			a.coverArt(c, album.CoverArt, 172)
 			ui.Text(c, album.Name).FontWeight(600).SingleLine()

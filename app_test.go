@@ -651,6 +651,62 @@ func TestStarFailureRestoresTheMark(t *testing.T) {
 	}
 }
 
+func TestAlbumCoverCentersInTheSelection(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.screen = screenAlbums
+	a.albums = []subsonic.Album{{ID: "al", Name: "测试专辑", Artist: "艺人"}}
+	a.selectedAlbum = 0
+	tt := ui.NewTester(a.view, 1080, 720)
+	// Find returns the grid cell: its label is the album name, and it is
+	// as tall as the cell. A click in the cell's side margin focuses the
+	// grid without opening the album.
+	cell, ok := tt.Find("测试专辑")
+	if !ok || cell.H < 200 {
+		t.Fatalf("album cell missing: %+v ok=%v", cell, ok)
+	}
+	tt.ClickAt(cell.X+6, cell.Y+cell.H/2)
+	if a.screen != screenAlbums {
+		t.Fatal("side click opened the album")
+	}
+	img := tt.Image()
+	// Through the placeholder, above its icon, so the square is one color.
+	y := int(cell.Y) + 28
+	if y < 0 || y >= img.Bounds().Dy() {
+		t.Fatalf("cover sample outside the frame: cell=%v", cell)
+	}
+	selL, selR := -1, -1
+	coverL, coverR := -1, -1
+	for x := int(cell.X) - 4; x < int(cell.X+cell.W)+4 && x < img.Bounds().Dx(); x++ {
+		if x < 0 {
+			continue
+		}
+		r, g, b, _ := img.At(x, y).RGBA()
+		r, g, b = r>>8, g>>8, b>>8
+		// Accent at 20% over white, or the accent border.
+		if r > 220 && int(r) > int(g)+20 && int(r) > int(b)+15 {
+			if selL < 0 {
+				selL = x
+			}
+			selR = x
+			continue
+		}
+		// The missing-cover tile is SurfaceHover, grayer than the page.
+		if r > 210 && r < 245 && absInt(int(r)-int(g)) < 10 && absInt(int(g)-int(b)) < 10 {
+			if coverL < 0 {
+				coverL = x
+			}
+			coverR = x
+		}
+	}
+	if selL < 0 || coverL < 0 || coverL < selL || coverR > selR {
+		t.Fatalf("cover is not inside the selection: sel=%d..%d cover=%d..%d cell=%v", selL, selR, coverL, coverR, cell)
+	}
+	left, right := coverL-selL, selR-coverR
+	if absInt(left-right) > 2 {
+		t.Fatalf("cover is not centered in the selection: left %d, right %d", left, right)
+	}
+}
+
 func TestAlbumStarSitsUnderTheTitle(t *testing.T) {
 	var albumID atomic.Value
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -685,8 +741,8 @@ func TestAlbumStarSitsUnderTheTitle(t *testing.T) {
 		t.Fatal("album title missing")
 	}
 	heart, ok := tt.Find("喜欢 测试专辑")
-	if !ok || heart.Y <= title.Y {
-		t.Fatalf("like button is not under the title: title=%+v heart=%+v ok=%v", title, heart, ok)
+	if !ok || heart.Y <= title.Y || absInt(int(heart.X-title.X)) > 1 {
+		t.Fatalf("like button is not under the title's start: title=%+v heart=%+v ok=%v", title, heart, ok)
 	}
 	if err := tt.Click("喜欢 测试专辑"); err != nil {
 		t.Fatal(err)
