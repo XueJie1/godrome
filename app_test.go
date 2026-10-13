@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/zalando/go-keyring"
 	"godrome/internal/config"
+	"godrome/internal/cover"
 	"godrome/internal/player"
 	"godrome/internal/subsonic"
 )
@@ -598,9 +600,13 @@ func TestStarWritesAndStarredPageReads(t *testing.T) {
 	}
 	waitUpdate(t, updates)
 	tt.Frame()
-	if a.screen != screenStarred || !tt.HasText("喜爱歌曲") || !tt.HasText("喜爱专辑") || !tt.HasText("艺人") {
+	if a.screen != screenStarred || !tt.HasText("喜爱歌曲") || !tt.HasText("歌曲") || !tt.HasText("专辑") || !tt.HasText("艺人") {
 		t.Fatalf("starred page: screen=%s texts=%v", a.screen, tt.Texts())
 	}
+	if err := tt.Click("喜爱艺人"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click("取消喜欢 艺人"); err != nil {
 		t.Fatal(err)
 	}
@@ -608,14 +614,22 @@ func TestStarWritesAndStarredPageReads(t *testing.T) {
 	if unstarred.Load() != 1 || len(a.artists) != 0 {
 		t.Fatalf("artist unstar: calls=%d artists=%v", unstarred.Load(), a.artists)
 	}
-	if err := tt.Click("取消喜欢 喜爱专辑"); err != nil {
+	if err := tt.Click("喜爱专辑"); err != nil {
 		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("取消喜欢 喜爱专辑"); err != nil {
+		t.Fatalf("album unlike: %v texts=%v", err, tt.Texts())
 	}
 	waitUpdate(t, updates)
 	tt.Frame()
-	if unstarred.Load() != 2 || tt.HasText("喜爱专辑") {
+	if unstarred.Load() != 2 || tt.HasText("取消喜欢 喜爱专辑") {
 		t.Fatalf("album stayed after unstar: calls=%d texts=%v", unstarred.Load(), tt.Texts())
 	}
+	if err := tt.Click("歌曲"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click("取消喜欢"); err != nil {
 		t.Fatal(err)
 	}
@@ -933,6 +947,38 @@ func TestQueueSelectionClearsTheScrollbar(t *testing.T) {
 	}
 }
 
+func TestProbeLibraryScroll(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	for i := range 200 {
+		a.songs = append(a.songs, subsonic.Song{ID: fmt.Sprint(i), Title: fmt.Sprintf("曲目 %d", i), Artist: "艺人"})
+	}
+	a.more = true
+	tt := ui.NewTester(a.view, 1080, 720)
+	r, ok := tt.Find("曲目 0")
+	t.Logf("first row %v ok=%v window texts=%d", r, ok, len(tt.Texts()))
+	last, lok := tt.Find("曲目 199")
+	t.Logf("last row %v ok=%v", last, lok)
+	if ok {
+		tt.Scroll(r.X+10, r.Y+4, 0, -400)
+		tt.Frame()
+		r2, _ := tt.Find("曲目 0")
+		t.Logf("after wheel first row %v", r2)
+		mid, mok := tt.Find("曲目 40")
+		t.Logf("row 40 %v ok=%v", mid, mok)
+	}
+	tt2 := ui.NewTester(a.view, 700, 720)
+	r3, ok3 := tt2.Find("曲目 0")
+	last3, lok3 := tt2.Find("曲目 199")
+	t.Logf("narrow first %v ok=%v last %v ok=%v texts=%d", r3, ok3, last3, lok3, len(tt2.Texts()))
+	if ok3 {
+		tt2.Scroll(r3.X+10, r3.Y+4, 0, -400)
+		r4, _ := tt2.Find("曲目 0")
+		t.Logf("narrow after wheel %v", r4)
+	}
+}
+
 func TestVirtualSongList(t *testing.T) {
 	a, _, _ := testApp(t)
 	a.screen = screenLocal
@@ -1070,4 +1116,252 @@ func TestKeyboardLoginBrowseQueueAndControls(t *testing.T) {
 	if a.client != nil || len(a.play.queue.Songs) != 0 {
 		t.Fatal("keyboard logout failed")
 	}
+}
+
+func TestSearchHeaderDoesNotBorrowTheFirstSong(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenSearch
+	a.query = "夜"
+	a.songs = []subsonic.Song{
+		{ID: "1", Title: "第一首", Artist: "甲", Album: "专辑甲", CoverArt: "cover-1"},
+		{ID: "2", Title: "第二首", Artist: "乙", Album: "专辑乙", CoverArt: "cover-2"},
+	}
+	tt := ui.NewTester(a.view, 1080, 720)
+	title, ok := tt.Find("搜索结果")
+	if !ok {
+		t.Fatal("search title missing")
+	}
+	for _, name := range []string{"甲", "乙", "专辑甲"} {
+		box, found := tt.Find(name)
+		if found && box.Y < title.Y+70 {
+			t.Fatalf("search header borrowed %s: title=%v box=%v", name, title, box)
+		}
+	}
+	if !tt.HasText("搜索结果") || !tt.HasText("夜") || !tt.HasText("本次返回 2 首") {
+		t.Fatalf("search header: %v", tt.Texts())
+	}
+}
+
+func TestLibraryHeaderCountsThePage(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.songOffset = subsonic.PageSize
+	a.more = true
+	a.songs = []subsonic.Song{{ID: "1", Title: "第二页第一首", Artist: "不该出现在页眉"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("曲库") || !tt.HasText("本页 1 首") || !tt.HasText("第 2 页") {
+		t.Fatalf("library header: %v", tt.Texts())
+	}
+	title, ok := tt.Find("曲库")
+	if !ok {
+		t.Fatal("library title missing")
+	}
+	if artist, found := tt.Find("不该出现在页眉"); found && artist.Y < title.Y+80 {
+		t.Fatal("library header borrowed the first song's artist")
+	}
+}
+
+func TestAlbumHeaderUsesTheAlbum(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenAlbum
+	a.albumID = "al"
+	a.albumName = "测试专辑"
+	a.albumHead = albumHeaderData{ID: "al", Name: "测试专辑", Artist: "专辑艺人", CoverArt: "album-cover"}
+	a.songs = []subsonic.Song{{ID: "1", Title: "第一首", Artist: "歌曲艺人", CoverArt: "song-cover"}}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("专辑艺人") || !tt.HasText("播放") {
+		t.Fatalf("album header: %v", tt.Texts())
+	}
+	if err := tt.Click("播放"); err != nil {
+		t.Fatal(err)
+	}
+	if a.play.queue.Index != 0 || len(a.play.queue.Songs) != 1 {
+		t.Fatalf("album play did not replace the queue: %+v", a.play.queue)
+	}
+}
+
+func TestEmptySearchNamesTheQuery(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenSearch
+	a.query = "不存在"
+	a.busy = false
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("没有找到与「不存在」匹配的歌曲") {
+		t.Fatalf("empty search: %v", tt.Texts())
+	}
+}
+
+func TestSearchLimitSaysOneHundred(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenSearch
+	a.query = "歌"
+	for i := range subsonic.PageSize {
+		a.songs = append(a.songs, subsonic.Song{ID: fmt.Sprint(i), Title: fmt.Sprintf("曲目 %d", i)})
+	}
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("最多显示 100 首") {
+		t.Fatalf("search cap: %v", tt.Texts())
+	}
+}
+
+func TestNarrowWindowFoldsTheQueueWithoutForgettingIt(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.queueVisible = true
+	a.queueWidth = 280
+	a.sidebarWidth = 220
+	wide := ui.NewTester(a.view, 1080, 720)
+	if !wide.HasText("播放队列") {
+		t.Fatal("wide window hid the queue")
+	}
+	// One tester keeps one frame count. A second tester would share the
+	// app's list state and be taken for a second list in the same frame.
+	narrow := wide
+	narrow.SetSize(800, 560)
+	narrow.Frame()
+	if narrow.HasText("队列为空") {
+		t.Fatalf("800-wide window still docked the queue: sidebar=%v queue=%v texts=%v", a.sidebarWidth, a.queueWidth, narrow.Texts())
+	}
+	if !narrow.HasText("窗口较窄，队列已折叠。加宽窗口后恢复。") {
+		t.Fatalf("folded queue has no notice: %v", narrow.Texts())
+	}
+	if !a.queueVisible || a.queueWidth != 280 {
+		t.Fatalf("fold overwrote the queue preference: visible=%v width=%v", a.queueVisible, a.queueWidth)
+	}
+	narrow.SetSize(1440, 900)
+	narrow.Frame()
+	if !narrow.HasText("播放队列") || a.queueWidth != 280 {
+		t.Fatalf("wide window did not restore the queue: visible=%v width=%v texts=%v", a.queueVisible, a.queueWidth, narrow.Texts())
+	}
+}
+
+func TestCompactVolumeKeepsMute(t *testing.T) {
+	a, p, _ := testApp(t)
+	a.screen = screenLibrary
+	tt := ui.NewTester(a.view, 800, 560)
+	if tt.HasText("音量") {
+		t.Fatal("narrow bar still shows the volume slider")
+	}
+	if err := tt.Click("静音"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	slider, ok := tt.Find("音量")
+	if !ok {
+		t.Fatalf("volume slider stayed hidden: %v", tt.Texts())
+	}
+	tt.ClickAt(slider.X+2, slider.Y+slider.H/2)
+	if a.volume != 0 || p.volume != 0 {
+		t.Fatalf("compact slider did not mute: volume=%v", a.volume)
+	}
+}
+
+func TestEqualizerBandsStayReachableWhenNarrow(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenSettings
+	a.settingsTab = 1
+	tt := ui.NewTester(a.view, 800, 560)
+	if err := tt.Click("16K Hz"); err != nil {
+		t.Fatalf("last equalizer band: %v texts=%v", err, tt.Texts())
+	}
+}
+
+func TestSearchTypingDoesNotGrowHistory(t *testing.T) {
+	var calls atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		q := r.URL.Query().Get("query")
+		fmt.Fprintf(w, `{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":%q,"title":"结果"}]}}}`, q)
+	}))
+	defer s.Close()
+	a, _, updates := testApp(t)
+	a.client, _ = subsonic.New(s.URL, "u", "p")
+	a.screen = screenAlbums
+	a.visit()
+	a.query = "夜"
+	a.search()
+	a.query = "夜色"
+	a.search()
+	waitUpdate(t, updates)
+	if len(a.nav.entries) != 2 {
+		t.Fatalf("typing grew history: %+v", a.nav.entries)
+	}
+	if len(a.songs) != 1 || a.songs[0].ID != "夜色" || calls.Load() != 1 {
+		t.Fatalf("stale or extra search: songs=%v calls=%d", a.songs, calls.Load())
+	}
+	a.query = ""
+	a.search()
+	if a.screen != screenAlbums {
+		t.Fatalf("clearing search left screen=%s", a.screen)
+	}
+}
+
+func TestBackRestoresTheSong(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/search3.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"keep","title":"还在"},{"id":"other","title":"另一首"}]}}}`)
+		case "/rest/getStarred2.view":
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","starred2":{}}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer s.Close()
+	a, _, updates := testApp(t)
+	a.client, _ = subsonic.New(s.URL, "u", "p")
+	a.screen = screenLibrary
+	a.songs = []subsonic.Song{{ID: "keep", Title: "还在"}, {ID: "other", Title: "另一首"}}
+	a.selectedSong = 1
+	a.visit()
+	a.showStarred()
+	waitUpdate(t, updates)
+	a.goBack()
+	waitUpdate(t, updates)
+	if a.screen != screenLibrary || a.selectedSong != 1 {
+		t.Fatalf("back did not restore the song: screen=%s selected=%d", a.screen, a.selectedSong)
+	}
+}
+
+func TestStarredAlbumsBuildOnlyVisibleCards(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenStarred
+	a.starredTab = 1
+	for i := range 10000 {
+		a.albums = append(a.albums, subsonic.Album{ID: fmt.Sprint(i), Name: fmt.Sprintf("专辑 %d", i), CoverArt: fmt.Sprint(i)})
+	}
+	var fetches atomic.Int32
+	a.covers = coverCacheCounter(&fetches)
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("专辑 0") || tt.HasText("专辑 9999") {
+		t.Fatalf("starred grid built offscreen cards, texts=%d", len(tt.Texts()))
+	}
+	if len(tt.Texts()) > 160 {
+		t.Fatalf("starred albums not virtualized: %d texts", len(tt.Texts()))
+	}
+	before := int(fetches.Load())
+	tt.Frame()
+	if int(fetches.Load())-before > 8 {
+		t.Fatalf("covers kept loading while the grid stood still: %d then %d", before, fetches.Load())
+	}
+	a.starredGrid.ScrollTo(9999, ui.End)
+	tt.Frame()
+	if !tt.HasText("专辑 9999") {
+		t.Fatal("last starred album inaccessible")
+	}
+}
+
+func coverCacheCounter(n *atomic.Int32) *cover.Cache {
+	return cover.New(context.Background(), func(context.Context, string) ([]byte, error) {
+		n.Add(1)
+		return nil, fmt.Errorf("fixture")
+	}, func() {})
 }

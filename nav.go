@@ -5,6 +5,15 @@ import "fmt"
 // place is one visit the back and forward buttons can return to.
 // It names the screen and the arguments that screen needs. Playback,
 // the queue, and column widths stay outside it.
+// restore is where the user was on a page. It names songs and albums by id,
+// never by a song slice, a bitmap, or a stream address.
+type restore struct {
+	selectedID string
+	visibleID  string
+	index      int
+	albumID    string
+}
+
 type place struct {
 	screen     screen
 	pageOffset int
@@ -12,9 +21,16 @@ type place struct {
 	albumID    string
 	albumName  string
 	query      string
+	restore    restore
+	opened     bool
 }
 
-func (p place) same(o place) bool { return p == o }
+// same compares the page, not where the user had scrolled on it.
+func (p place) same(o place) bool {
+	p.restore, o.restore = restore{}, restore{}
+	p.opened, o.opened = false, false
+	return p == o
+}
 
 func (p place) title() string {
 	switch p.screen {
@@ -83,6 +99,27 @@ func (h *history) push(p place) {
 		h.entries = append([]place(nil), h.entries[len(h.entries)-100:]...)
 	}
 	h.at = len(h.entries) - 1
+}
+
+// mark stores where the user was on the page now shown. A later visit does
+// not copy it.
+func (h *history) mark(r restore) {
+	if _, ok := h.current(); !ok {
+		return
+	}
+	h.entries[h.at].restore = r
+}
+
+// replaceSearch keeps one search visit while the query changes. A search
+// that is not the page now shown is a new visit, and it drops forward.
+func (h *history) replaceSearch(query string) {
+	cur, ok := h.current()
+	if !ok || cur.screen != screenSearch {
+		h.push(place{screen: screenSearch, query: query})
+		return
+	}
+	h.entries[h.at].query = query
+	h.entries[h.at].restore = restore{}
 }
 
 // note keeps the shown entry's display name current without a new visit.

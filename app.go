@@ -131,40 +131,51 @@ type app struct {
 	songs                             []subsonic.Song
 	artists                           []subsonic.Artist
 	albumName                         string
+	albumHead                         albumHeaderData
 	// likedSongs and likedAlbums are the session copy of server stars.
 	// They are not written to settings.
-	likedSongs                                 map[string]bool
-	likedAlbums                                map[string]bool
-	more                                       bool
-	pageCancel                                 context.CancelFunc
-	pageCtx                                    context.Context
-	requestID                                  uint64
-	covers                                     *cover.Cache
-	play                                       playbackState
-	playback                                   player.Event
-	generation                                 uint64
-	position, volume                           float64
-	volumeBefore                               float64
-	albumsGrid                                 ui.GridState
-	songsList, queueList                       ui.ListState
-	selectedAlbum, selectedSong, selectedQueue int
-	queueVisible                               bool
-	sidebarWidth                               float32
-	queueWidth                                 float32
-	albumID                                    string
-	nav                                        history
-	restoring                                  bool
-	closeOnce                                  sync.Once
-	remember                                   bool
-	autoLogin                                  bool
-	accent                                     ui.Color
-	appearance                                 string
-	eq                                         eqCurve
-	eqPreset                                   eqPreset
-	eqGain                                     [eqBands]float64
-	settingsTab                                int
-	settingsScroll                             ui.ScrollState
-	accentOpen                                 bool
+	likedSongs                                  map[string]bool
+	likedAlbums                                 map[string]bool
+	more                                        bool
+	pageCancel                                  context.CancelFunc
+	pageCtx                                     context.Context
+	requestID                                   uint64
+	covers                                      *cover.Cache
+	play                                        playbackState
+	playback                                    player.Event
+	generation                                  uint64
+	position, volume                            float64
+	volumeBefore                                float64
+	albumsGrid                                  ui.GridState
+	songsList, queueList                        ui.ListState
+	starredSongs                                ui.ListState
+	starredGrid                                 ui.GridState
+	artistList                                  ui.ListState
+	selectedAlbum, selectedSong, selectedQueue  int
+	selectedStarredAlbum, selectedStarredArtist int
+	starredTab                                  int
+	queueVisible                                bool
+	sidebarWidth                                float32
+	queueWidth                                  float32
+	albumID                                     string
+	nav                                         history
+	restoring                                   bool
+	closeOnce                                   sync.Once
+	remember                                    bool
+	autoLogin                                   bool
+	accent                                      ui.Color
+	appearance                                  string
+	eq                                          eqCurve
+	eqPreset                                    eqPreset
+	eqGain                                      [eqBands]float64
+	settingsTab                                 int
+	settingsScroll                              ui.ScrollState
+	accentOpen                                  bool
+	volumeShown                                 bool
+	searchFrom                                  place
+	searching                                   bool
+	pendingRestore                              restore
+	wantRestore                                 bool
 	// setAppearance applies light, dark, or system. The window sets it.
 	// The UI tester leaves it empty, because that call waits for the app loop.
 	setAppearance func(mygo.ThemeSource)
@@ -180,7 +191,7 @@ func newApp(settings config.Settings, path string, engine playback) *app {
 	if queue == 0 {
 		queue = queueWidthDefault
 	}
-	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}, accent: accentFromSettings(settings.Accent), appearance: settings.Appearance, eqPreset: eqPreset(settings.EQPreset)}
+	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, selectedStarredAlbum: -1, selectedStarredArtist: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}, accent: accentFromSettings(settings.Accent), appearance: settings.Appearance, eqPreset: eqPreset(settings.EQPreset)}
 	a.volumeBefore = settings.Volume
 	if a.volumeBefore <= 0 {
 		a.volumeBefore = 70
@@ -254,8 +265,17 @@ func (a *app) beginPage() (context.Context, uint64) {
 	a.albums = nil
 	a.selectedSong = -1
 	a.selectedAlbum = -1
+	a.selectedStarredAlbum = -1
+	a.selectedStarredArtist = -1
 	a.songsList = ui.ListState{}
 	a.albumsGrid = ui.GridState{}
+	a.starredSongs = ui.ListState{}
+	a.starredGrid = ui.GridState{}
+	a.artistList = ui.ListState{}
+	a.searching = false
+	if !a.wantRestore {
+		a.pendingRestore = restore{}
+	}
 	return a.pageCtx, a.requestID
 }
 func (a *app) finish(id uint64, err error) bool {
@@ -264,10 +284,55 @@ func (a *app) finish(id uint64, err error) bool {
 	}
 	a.busy = false
 	a.status = ""
+	a.searching = false
 	if err != nil && !errors.Is(err, context.Canceled) {
 		a.errorText = err.Error()
 	}
 	return err == nil
+}
+
+// keepRestore applies a bookmark once, after the page that owns it has
+// its rows. A missing id falls back to the index, then to the first row.
+func (a *app) keepRestore(ids []string, selected *int) {
+	if !a.wantRestore {
+		return
+	}
+	mark := a.pendingRestore
+	a.wantRestore = false
+	a.pendingRestore = restore{}
+	if len(ids) == 0 {
+		*selected = -1
+		return
+	}
+	at := indexOf(ids, mark.selectedID)
+	if at < 0 {
+		at = mark.index
+	}
+	if at < 0 || at >= len(ids) {
+		at = 0
+	}
+	*selected = at
+	a.songsList.ScrollTo(at, ui.Center)
+}
+
+func indexOf(ids []string, id string) int {
+	if id == "" {
+		return -1
+	}
+	for i, item := range ids {
+		if item == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func songIDs(songs []subsonic.Song) []string {
+	ids := make([]string, len(songs))
+	for i, song := range songs {
+		ids[i] = song.ID
+	}
+	return ids
 }
 func (a *app) setupCovers(ctx context.Context) {
 	client := a.client
@@ -315,6 +380,33 @@ func (a *app) here() place {
 	}
 }
 
+// rememberPlace stores the selection of the page being left. History does
+// not keep the songs themselves.
+func (a *app) rememberPlace() {
+	if a.restoring || a.screen == screenLogin {
+		return
+	}
+	mark := restore{index: a.selectedSong}
+	if a.screen == screenAlbums {
+		mark.index = a.selectedAlbum
+		if a.selectedAlbum >= 0 && a.selectedAlbum < len(a.albums) {
+			mark.albumID = a.albums[a.selectedAlbum].ID
+		}
+	}
+	if a.selectedSong >= 0 && a.selectedSong < len(a.songs) {
+		mark.selectedID = a.songs[a.selectedSong].ID
+	}
+	first, _ := a.songsList.Visible()
+	if first >= 0 && first < len(a.songs) {
+		mark.visibleID = a.songs[first].ID
+		mark.index = first
+		if mark.selectedID == "" {
+			mark.selectedID = a.songs[first].ID
+		}
+	}
+	a.nav.mark(mark)
+}
+
 // visit records the screen the user just opened. Restoring a history
 // entry must not record itself.
 func (a *app) visit() {
@@ -326,6 +418,8 @@ func (a *app) visit() {
 
 func (a *app) goTo(p place) {
 	a.restoring = true
+	a.pendingRestore = p.restore
+	a.wantRestore = true
 	defer func() { a.restoring = false }()
 	switch p.screen {
 	case screenLibrary:
@@ -374,12 +468,14 @@ func (a *app) showLibrary() {
 }
 
 func (a *app) loadSongs(offset int) {
+	a.rememberPlace()
 	a.screen = screenLibrary
 	ctx, id := a.beginPage()
 	a.songOffset = max(0, offset)
 	offset = a.songOffset
 	a.albumName = ""
 	a.albumID = ""
+	a.albumHead = albumHeaderData{}
 	a.query = ""
 	a.visit()
 	a.setupCovers(ctx)
@@ -392,11 +488,13 @@ func (a *app) loadSongs(offset int) {
 			}
 			a.songs = songs
 			a.more = len(songs) == subsonic.PageSize
+			a.keepRestore(songIDs(songs), &a.selectedSong)
 		})
 	}()
 }
 
 func (a *app) showStarred() {
+	a.rememberPlace()
 	if a.client == nil {
 		a.showPlaceholder(screenStarred, "喜爱")
 		return
@@ -404,6 +502,7 @@ func (a *app) showStarred() {
 	a.screen = screenStarred
 	a.albumName = "喜爱"
 	a.albumID = ""
+	a.albumHead = albumHeaderData{}
 	a.query = ""
 	a.artists = nil
 	a.visit()
@@ -623,12 +722,14 @@ func (a *app) setArtistStar(artist subsonic.Artist, on bool) {
 }
 
 func (a *app) showPlaceholder(s screen, title string) {
+	a.rememberPlace()
 	if a.pageCancel != nil {
 		a.pageCancel()
 	}
 	a.screen = s
 	a.albumName = title
 	a.albumID = ""
+	a.albumHead = albumHeaderData{}
 	a.visit()
 	a.busy = false
 	a.status = ""
@@ -640,12 +741,14 @@ func (a *app) showPlaceholder(s screen, title string) {
 }
 
 func (a *app) browse(offset int) {
+	a.rememberPlace()
 	a.screen = screenAlbums
 	ctx, id := a.beginPage()
 	a.pageOffset = max(0, offset)
 	offset = a.pageOffset
 	a.albumName = ""
 	a.albumID = ""
+	a.albumHead = albumHeaderData{}
 	a.query = ""
 	a.visit()
 	a.setupCovers(ctx)
@@ -674,8 +777,10 @@ func (a *app) browse(offset int) {
 	}()
 }
 func (a *app) openAlbum(id string) {
+	a.rememberPlace()
 	a.screen = screenAlbum
 	a.albumID = id
+	a.albumHead = albumHeaderData{}
 	a.visit()
 	ctx, seq := a.beginPage()
 	a.setupCovers(ctx)
@@ -688,6 +793,7 @@ func (a *app) openAlbum(id string) {
 			}
 			a.songs = album.Songs
 			a.albumName = album.Name
+			a.albumHead = albumHeaderData{ID: album.ID, Name: album.Name, Artist: album.Artist, CoverArt: album.CoverArt}
 			if a.likedAlbums == nil {
 				a.likedAlbums = map[string]bool{}
 			}
@@ -695,33 +801,68 @@ func (a *app) openAlbum(id string) {
 				a.likedAlbums[album.ID] = album.Liked()
 			}
 			a.nav.note(a.here())
+			a.keepRestore(songIDs(album.Songs), &a.selectedSong)
 		})
 	}()
 }
 func (a *app) search() {
 	query := a.query
 	if query == "" {
+		a.clearSearch()
+		return
+	}
+	if a.screen != screenSearch {
+		a.rememberPlace()
+		from := a.here()
+		from.opened = true
+		a.searchFrom = from
+	}
+	a.searchNow(query)
+}
+
+// clearSearch returns to the page search was opened from. It does not
+// record another search visit.
+func (a *app) clearSearch() {
+	back := a.searchFrom
+	a.searchFrom = place{}
+	if !back.opened {
 		a.browse(a.pageOffset)
 		return
 	}
-	a.searchNow(query)
+	a.goTo(back)
 }
 
 // searchNow runs a search whose query is already chosen. The debounce
 // still applies, so a history return does not hit the server at once.
 func (a *app) searchNow(query string) {
 	if query == "" {
-		a.browse(a.pageOffset)
+		a.clearSearch()
 		return
 	}
 	a.query = query
+	fresh := a.screen != screenSearch
 	a.screen = screenSearch
 	a.albumID = ""
 	a.albumName = ""
-	a.visit()
-	ctx, id := a.beginPage()
+	a.albumHead = albumHeaderData{}
+	if a.restoring || fresh {
+		a.visit()
+	} else {
+		a.nav.replaceSearch(query)
+	}
+	if a.pageCancel != nil {
+		a.pageCancel()
+	}
+	a.pageCtx, a.pageCancel = context.WithCancel(a.ctx)
+	a.requestID++
+	id := a.requestID
+	ctx := a.pageCtx
+	a.searching = true
+	a.status = "正在搜索「" + query + "」"
 	client := a.client
-	a.setupCovers(ctx)
+	if a.covers == nil {
+		a.setupCovers(ctx)
+	}
 	go func() {
 		timer := time.NewTimer(300 * time.Millisecond)
 		defer timer.Stop()
@@ -735,7 +876,11 @@ func (a *app) searchNow(query string) {
 			if !a.finish(id, err) {
 				return
 			}
+			if a.query != query {
+				return
+			}
 			a.songs = songs
+			a.keepRestore(songIDs(songs), &a.selectedSong)
 		})
 	}()
 }
@@ -794,6 +939,10 @@ func (a *app) logout() {
 	a.control(a.engine.Stop())
 	a.screen = screenLogin
 	a.nav = history{}
+	a.searchFrom = place{}
+	a.pendingRestore = restore{}
+	a.wantRestore = false
+	a.albumHead = albumHeaderData{}
 	a.albumID = ""
 	a.beginPage()
 	a.busy = false
@@ -812,6 +961,7 @@ func (a *app) logout() {
 	a.playback = player.Event{Generation: a.generation, State: player.Idle}
 }
 func (a *app) local(paths []string) {
+	a.rememberPlace()
 	a.screen = screenLocal
 	a.visit()
 	for _, p := range paths {
@@ -997,6 +1147,16 @@ const (
 	queueMinWidth       = 200
 	sidebarMaxWidth     = 360
 	queueMaxWidth       = 480
+	// contentMinWidth is the main page before its own padding. A docked
+	// queue yields to this before it yields to the saved queue width.
+	contentMinWidth = 320
+	// foldWindow is the window width that cannot keep a docked queue. Wider
+	// windows keep the queue the user asked for, and the divider limits apply.
+	foldWindow = 860
+	contentPad = 44
+	// compactControls is the window width where the volume slider leaves the
+	// bottom bar. The speaker button stays.
+	compactControls = 900
 	// motionDuration is one layout change. It is not a loop.
 	motionDuration = 180 * time.Millisecond
 )
@@ -1033,20 +1193,26 @@ func listScrollGutter(t *ui.Theme) float32 {
 
 func (a *app) view(c *ui.Context) {
 	t := a.applyTheme(c)
+	mode := a.layoutMode(c)
+	// Copy the decision out of the struct. The view closure runs again as
+	// the frame is built, and a later write to the struct must not change
+	// the branch this frame already chose.
+	sidebar := mode.sidebar
+	docked := mode.queueDocked
+	content := mode.content
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		if a.screen == screenLogin {
 			a.loginView(c)
 			return
 		}
-		ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() {
+		ui.Split(c, &sidebar, func() { a.sidebar(c) }, func() {
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				a.topBar(c)
 				a.message(c)
-				if a.queueOpen() {
+				if docked {
 					// The value Split stores is the content width. The queue
 					// width is what is left, so the drag matches the pane on
 					// the right.
-					content := a.contentWidth(c)
 					ui.Split(c, &content, func() { a.mainColumn(c) }, func() { a.queuePane(c) }).Grow(1).MinHeight(0)
 					a.queueWidth = a.widthFromContent(c, content)
 				} else {
@@ -1054,9 +1220,44 @@ func (a *app) view(c *ui.Context) {
 				}
 			})
 		}).Grow(1).MinHeight(0)
+		a.sidebarWidth = sidebar
 		a.clampColumns(c)
 		a.controlsView(c)
+		if !docked && a.queueVisible {
+			a.queueOverlay(c)
+		}
 	})
+}
+
+// layout is one decision about the three columns. Views read this instead
+// of guessing from the window a second time.
+type layout struct {
+	sidebar     float32
+	content     float32
+	queueDocked bool
+	compact     bool
+}
+
+// layoutMode keeps the saved sidebar and queue widths, and only changes
+// the width this frame uses. A window that is too narrow folds the queue
+// without clearing the user's request to show it.
+func (a *app) layoutMode(c *ui.Context) layout {
+	window, _ := c.Size()
+	if window <= 1 {
+		window = 1080
+	}
+	side := clampWidth(a.sidebarWidth, sidebarMinWidth, sidebarMaxWidth)
+	room := window - side - 1
+	need := float32(contentMinWidth + contentPad)
+	docked := a.queueVisible && window >= foldWindow && room >= need+1+queueMinWidth
+	content := room
+	if docked {
+		content = room - a.queueWidth - 1
+		if content < need {
+			content = need
+		}
+	}
+	return layout{sidebar: side, content: content, queueDocked: docked, compact: window < compactControls}
 }
 
 // queueOpen reports whether the queue pane is taking part in the row.
@@ -1087,12 +1288,8 @@ func (a *app) widthFromContent(c *ui.Context, content float32) float32 {
 // The view context reports the window, so this uses the same split widths
 // the layout stores.
 func (a *app) pageWidth(c *ui.Context) float32 {
-	_, after := a.columnRoom(c)
-	page := after
-	if a.queueOpen() && after > 1 {
-		page = a.contentWidth(c)
-	}
-	page -= 44
+	mode := a.layoutMode(c)
+	page := mode.content - contentPad
 	if page < 48 {
 		return 48
 	}
@@ -1109,15 +1306,18 @@ func (a *app) columnRoom(c *ui.Context) (window, afterSidebar float32) {
 // resize. Split itself only keeps 40 DIPs from either edge.
 func (a *app) clampColumns(c *ui.Context) {
 	a.sidebarWidth = clampWidth(a.sidebarWidth, sidebarMinWidth, sidebarMaxWidth)
-	_, after := a.columnRoom(c)
-	if after > 0 {
-		a.sidebarWidth = min(a.sidebarWidth, max(sidebarMinWidth, after-40))
+	window, _ := c.Size()
+	if window > 1 && window < foldWindow {
+		a.sidebarWidth = min(a.sidebarWidth, max(sidebarMinWidth, window-contentMinWidth))
 	}
-	if !a.queueVisible || after <= 1 {
+	// A folded queue keeps the width the user saved. The next wide window
+	// uses it again.
+	if !a.layoutMode(c).queueDocked {
 		a.queueWidth = clampWidth(a.queueWidth, queueMinWidth, queueMaxWidth)
 		return
 	}
-	hi := min(queueMaxWidth, after-40-1)
+	_, after := a.columnRoom(c)
+	hi := min(queueMaxWidth, after-contentMinWidth-contentPad-1)
 	if hi < queueMinWidth {
 		hi = queueMinWidth
 	}
@@ -1179,6 +1379,7 @@ func (a *app) sidebar(c *ui.Context) {
 }
 
 func (a *app) showSettings() {
+	a.rememberPlace()
 	if a.pageCancel != nil {
 		a.pageCancel()
 	}
@@ -1331,7 +1532,7 @@ func (a *app) equalizerSection(c *ui.Context, t *ui.Theme) {
 				a.persistLook()
 			}
 		})
-		ui.Row(c).Gap(4).AlignItems(ui.End).Children(func() {
+		ui.ScrollHorizontal(c).Gap(4).AlignItems(ui.End).Shrink(0).Children(func() {
 			for i, hz := range eqFreqs {
 				band := i
 				ui.Column(c).Gap(6).AlignItems(ui.Center).Width(46).Children(func() {
@@ -1434,64 +1635,93 @@ func (a *app) historyButtons(c *ui.Context) {
 
 func (a *app) starredView(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Grow(1).Children(func() {
-		ui.Row(c).AlignItems(ui.End).Padding(6, 2, 12, 2).Children(func() {
-			ui.Text(c, "喜爱").FontSize(30).FontWeight(700).Grow(1)
-			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
-		})
+	ui.Column(c).Grow(1).MinHeight(0).Children(func() {
+		ui.Text(c, "喜爱").FontSize(30).FontWeight(700).Padding(6, 2, 8, 2)
+		ui.Tabs(c, &a.starredTab, "歌曲", "喜爱专辑", "喜爱艺人").Padding(0, 2, 8, 2)
 		if !a.busy && len(a.artists) == 0 && len(a.albums) == 0 && len(a.songs) == 0 {
 			ui.Text(c, "还没有喜爱。在歌曲或专辑上标记喜欢。").TextColor(t.TextMuted).Padding(8, 2, 12, 2)
+			return
 		}
-		if len(a.artists) > 0 {
-			ui.Text(c, "艺人").FontSize(13).FontWeight(700).Padding(4, 2, 8, 2)
-			ui.ScrollHorizontal(c).Gap(8).Shrink(0).Padding(0, 2, 12, 2).Children(func() {
-				for _, artist := range a.artists {
-					item := artist
-					label := item.Name
-					if label == "" {
-						label = "未知艺人"
-					}
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(4, 8).Radius(8).Background(t.SurfaceHover).Children(func() {
-						ui.Text(c, label).SingleLine()
-						if ui.Button(c, "").Label("取消喜欢 " + label).Tooltip("取消喜欢").Children(func() {
-							ui.Icon(c, iconHeartOn).Size(12, 12).TextColor(t.Accent)
-						}).Clicked() {
-							a.setArtistStar(item, false)
-						}
-					})
-				}
-			})
+		switch a.starredTab {
+		case 1:
+			a.starredAlbums(c, t)
+		case 2:
+			a.starredArtists(c, t)
+		default:
+			ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted).Padding(0, 2, 8, 2)
+			a.songList(c, "还没有喜爱的歌曲。")
 		}
-		if len(a.albums) > 0 {
-			ui.Text(c, "专辑").FontSize(13).FontWeight(700).Padding(4, 2, 8, 2)
-			openID := ""
-			ui.ScrollHorizontal(c).Gap(12).Shrink(0).Padding(0, 2, 12, 2).Children(func() {
-				for _, album := range a.albums {
-					item := album
-					ui.Column(c).Width(148).Gap(6).Children(func() {
-						card := ui.Column(c).Gap(6).Cursor(ui.CursorPointer)
-						card.Children(func() {
-							a.coverArt(c, item.CoverArt, 132)
-							ui.Text(c, item.Name).FontWeight(600).SingleLine()
-							artist := item.Artist
-							if artist == "" {
-								artist = "未知艺人"
-							}
-							ui.Text(c, artist).FontSize(12).TextColor(t.TextMuted).SingleLine()
-						})
-						if card.Clicked() {
-							openID = item.ID
-						}
-						a.albumStarButton(c, item)
-					})
-				}
-			})
-			if openID != "" {
-				a.openAlbum(openID)
-			}
-		}
-		a.songList(c, "歌曲")
 	})
+}
+
+func (a *app) starredAlbums(c *ui.Context, t *ui.Theme) {
+	ui.Textf(c, "%d 张", len(a.albums)).TextColor(t.TextMuted).Padding(0, 2, 8, 2)
+	if !a.busy && len(a.albums) == 0 {
+		ui.Text(c, "还没有喜欢的专辑。").TextColor(t.TextMuted).Padding(8, 2)
+		return
+	}
+	a.starredGrid.Selected = &a.selectedStarredAlbum
+	a.starredGrid.Key = func(i int) any { return a.albums[i].ID }
+	a.starredGrid.Label = func(i int) string { return a.albums[i].Name }
+	openID := ""
+	grid := ui.GridView(c, &a.starredGrid, len(a.albums), 148, 236, func(i int) {
+		album := a.albums[i]
+		card := ui.Column(c).Width(132).AlignSelf(ui.Center).Padding(8, 0, 6, 0).Gap(6).Cursor(ui.CursorPointer)
+		card.Children(func() {
+			a.coverArt(c, album.CoverArt, 132)
+			ui.Text(c, album.Name).FontWeight(600).SingleLine()
+			artist := album.Artist
+			if artist == "" {
+				artist = "未知艺人"
+			}
+			ui.Text(c, artist).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			a.albumStarButton(c, album)
+		})
+		if card.Clicked() {
+			openID = album.ID
+		}
+	}).Grow(1)
+	if grid.Submitted() && a.selectedStarredAlbum >= 0 && a.selectedStarredAlbum < len(a.albums) {
+		openID = a.albums[a.selectedStarredAlbum].ID
+	}
+	if openID != "" {
+		a.openAlbum(openID)
+	}
+}
+
+func (a *app) starredArtists(c *ui.Context, t *ui.Theme) {
+	ui.Textf(c, "%d 位", len(a.artists)).TextColor(t.TextMuted).Padding(0, 2, 8, 2)
+	if !a.busy && len(a.artists) == 0 {
+		ui.Text(c, "还没有喜欢的艺人。").TextColor(t.TextMuted).Padding(8, 2)
+		return
+	}
+	a.artistList.Selected = &a.selectedStarredArtist
+	a.artistList.Key = func(i int) any { return a.artists[i].ID }
+	a.artistList.Label = func(i int) string {
+		if a.artists[i].Name == "" {
+			return "未知艺人"
+		}
+		return a.artists[i].Name
+	}
+	drop := -1
+	ui.List(c, &a.artistList, len(a.artists), func(i int) {
+		artist := a.artists[i]
+		name := artist.Name
+		if name == "" {
+			name = "未知艺人"
+		}
+		ui.Row(c).Padding(7, 8).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, name).Grow(1).SingleLine()
+			if ui.Button(c, "").Label("取消喜欢 " + name).Tooltip("取消喜欢").Children(func() {
+				ui.Icon(c, iconHeartOn).Size(14, 14).TextColor(t.Accent)
+			}).Clicked() {
+				drop = i
+			}
+		})
+	}).Grow(1)
+	if drop >= 0 && drop < len(a.artists) {
+		a.setArtistStar(a.artists[drop], false)
+	}
 }
 
 func (a *app) placeholderView(c *ui.Context) {
@@ -1602,9 +1832,13 @@ func (a *app) albumStarButton(c *ui.Context, album subsonic.Album) {
 		return
 	}
 	liked := a.albumLiked(album)
-	label := "喜欢 " + album.Name
+	name := album.Name
+	if name == "" {
+		name = "专辑"
+	}
+	label := "喜欢 " + name
 	if liked {
-		label = "取消喜欢 " + album.Name
+		label = "取消喜欢 " + name
 	}
 	if a.heartButton(c, label, liked, 14) {
 		a.setAlbumStar(album, !liked)
@@ -1663,55 +1897,22 @@ func (a *app) albumView(c *ui.Context) {
 }
 
 func (a *app) songView(c *ui.Context) {
-	t := c.Theme()
-	title := a.albumName
-	if title == "" {
-		title = "歌曲"
-	}
-	library := a.screen == screenLibrary
 	switch a.screen {
 	case screenSearch:
-		title = "搜索结果"
+		a.searchHeader(c)
 	case screenLibrary:
-		title = "曲库"
+		a.libraryHeader(c)
+	case screenAlbum:
+		a.albumHeader(c)
+	default:
+		a.localHeader(c)
 	}
-	artist := ""
-	if len(a.songs) > 0 {
-		artist = a.songs[0].Artist
+	empty := ""
+	if a.screen == screenSearch && a.query != "" {
+		empty = "没有找到与「" + a.query + "」匹配的歌曲"
 	}
-	cover := ""
-	if len(a.songs) > 0 {
-		cover = a.songs[0].CoverArt
-	}
-	header := func() {
-		ui.Text(c, title).FontSize(30).FontWeight(700).SingleLine()
-		if a.screen == screenAlbum && a.albumID != "" {
-			a.albumStarButton(c, subsonic.Album{ID: a.albumID, Name: title})
-		}
-		if artist != "" {
-			ui.Text(c, artist).TextColor(t.TextMuted)
-		}
-		ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
-	}
-	showCover := a.screen != screenLocal && !library
-	// Row padding, the gap, and room for the title plus the heart.
-	stacked := showCover && a.pageWidth(c) < 148+18+96
-	if stacked {
-		coverSize := min(float32(148), max(float32(72), a.pageWidth(c)-4))
-		ui.Column(c).Gap(12).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
-			a.coverArt(c, cover, coverSize)
-			ui.Column(c).MinWidth(0).Gap(4).Children(header)
-		})
-	} else {
-		ui.Row(c).Gap(18).AlignItems(ui.End).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
-			if showCover {
-				a.coverArt(c, cover, 148)
-			}
-			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(header)
-		})
-	}
-	a.songList(c, "")
-	if library {
+	a.songList(c, empty)
+	if a.screen == screenLibrary {
 		ui.Row(c).Gap(8).Padding(10, 0, 4, 0).Children(func() {
 			if ui.Button(c, "上一页").Disabled(a.busy || a.songOffset == 0).Clicked() {
 				a.loadSongs(a.songOffset - subsonic.PageSize)
@@ -1723,11 +1924,102 @@ func (a *app) songView(c *ui.Context) {
 	}
 }
 
+func (a *app) libraryHeader(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).AlignItems(ui.End).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+			ui.Text(c, "曲库").FontSize(30).FontWeight(700).SingleLine()
+			ui.Textf(c, "本页 %d 首", len(a.songs)).TextColor(t.TextMuted)
+			ui.Textf(c, "第 %d 页", a.songOffset/subsonic.PageSize+1).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, "播放本页").Disabled(a.busy || len(a.songs) == 0).Clicked() {
+			a.playSongs(0)
+		}
+	})
+}
+
+func (a *app) searchHeader(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).MinWidth(0).Gap(4).Padding(8, 2, 16, 2).Children(func() {
+		ui.Text(c, "搜索结果").FontSize(30).FontWeight(700).SingleLine()
+		if a.query != "" {
+			ui.Text(c, a.query).TextColor(t.TextMuted).SingleLine()
+		}
+		ui.Textf(c, "本次返回 %d 首", len(a.songs)).TextColor(t.TextMuted)
+		if len(a.songs) == subsonic.PageSize {
+			ui.Text(c, "最多显示 100 首").FontSize(12).TextColor(t.TextMuted)
+		}
+		if a.searching {
+			ui.Text(c, a.status).FontSize(12).TextColor(t.TextMuted)
+		}
+	})
+}
+
+func (a *app) albumHeader(c *ui.Context) {
+	t := c.Theme()
+	head := a.albumHead
+	if head.Name == "" {
+		head.Name = a.albumName
+	}
+	if head.Name == "" {
+		head.Name = "专辑"
+	}
+	if head.ID == "" {
+		head.ID = a.albumID
+	}
+	header := func() {
+		ui.Text(c, head.Name).FontSize(30).FontWeight(700).SingleLine()
+		if head.ID != "" {
+			a.albumStarButton(c, subsonic.Album{ID: head.ID, Name: head.Name})
+		}
+		if head.Artist != "" {
+			ui.Text(c, head.Artist).TextColor(t.TextMuted)
+		}
+		ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
+		if ui.Button(c, "播放").Disabled(a.busy || len(a.songs) == 0).Clicked() {
+			a.playSongs(0)
+		}
+	}
+	// Row padding, the gap, and room for the title plus the heart.
+	stacked := a.pageWidth(c) < 148+18+96
+	if stacked {
+		coverSize := min(float32(148), max(float32(72), a.pageWidth(c)-4))
+		ui.Column(c).Gap(12).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+			a.coverArt(c, head.CoverArt, coverSize)
+			ui.Column(c).MinWidth(0).Gap(4).Children(header)
+		})
+		return
+	}
+	ui.Row(c).Gap(18).AlignItems(ui.End).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+		a.coverArt(c, head.CoverArt, 148)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(header)
+	})
+}
+
+func (a *app) localHeader(c *ui.Context) {
+	t := c.Theme()
+	title := a.albumName
+	if title == "" {
+		title = "本地音频"
+	}
+	ui.Column(c).MinWidth(0).Gap(4).Padding(8, 2, 16, 2).Children(func() {
+		ui.Text(c, title).FontSize(30).FontWeight(700).SingleLine()
+		ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
+	})
+}
+
+// albumHeaderData is the album page's own title. It is not the first song.
+type albumHeaderData struct {
+	ID, Name, Artist, CoverArt string
+}
+
 // songList is the virtual song list. emptyTitle is the copy shown when the
 // page has no songs and is not still loading. An empty emptyTitle keeps
 // the existing "没有歌曲" copy used by album, search, and library pages.
 func (a *app) songList(c *ui.Context, emptyTitle string) {
 	t := c.Theme()
+	// The list writes its scroll into this state while laying out, after
+	// the view returns. A copy would drop that place on the next frame.
 	a.songsList.Selected = &a.selectedSong
 	a.songsList.Key = func(i int) any { return a.songs[i].ID }
 	a.songsList.Label = func(i int) string { return a.songs[i].Title }
@@ -1830,6 +2122,8 @@ func (a *app) queueView(c *ui.Context) {
 	t := c.Theme()
 	ui.Text(c, "播放队列").FontSize(13).FontWeight(700).Padding(4, 8, 2, 8)
 	ui.Textf(c, "%d 首", len(a.play.queue.Songs)).FontSize(12).TextColor(t.TextMuted).Padding(0, 8, 8, 8)
+	// The list writes its scroll into this state while laying out, after
+	// the view returns. A copy would drop that place on the next frame.
 	a.queueList.Selected = &a.selectedQueue
 	// Index keys allow adding the same song more than once.
 	a.queueList.Label = func(i int) string { return a.play.queue.Songs[i].Title }
@@ -1895,8 +2189,59 @@ func (a *app) toggleMute() {
 	a.control(a.engine.SetVolume(a.volume))
 }
 
+// volumeControl keeps mute one click away. A narrow window opens the
+// slider from the speaker instead of keeping it in the bar.
+func (a *app) volumeControl(c *ui.Context, t *ui.Theme, compact bool) {
+	glyph, tip := iconVolume, "静音"
+	if a.volume <= 0 {
+		glyph, tip = iconVolumeMute, "取消静音"
+	}
+	mute := ui.Button(c, "").Label("静音").Tooltip(tip).Padding(2)
+	mute.Background(ui.Color{}).BorderWidth(0)
+	mute.Children(func() { ui.Icon(c, glyph).Size(16, 16).TextColor(t.TextMuted) })
+	if mute.Clicked() {
+		if compact {
+			a.volumeShown = !a.volumeShown
+		} else {
+			a.toggleMute()
+		}
+	}
+	// A narrow bar hides the slider until the speaker is pressed. The slider
+	// stays in the bar, so the press that revealed it does not dismiss it.
+	if compact && !a.volumeShown {
+		return
+	}
+	a.volumeSlider(c)
+}
+
+func (a *app) volumeSlider(c *ui.Context) {
+	if ui.Slider(c, &a.volume, 0, 100).Label("音量").Width(110).Changed() {
+		if a.volume > 0 {
+			a.volumeBefore = a.volume
+		}
+		a.control(a.engine.SetVolume(a.volume))
+	}
+}
+
+// queueOverlay is the queue when the window cannot dock it. Closing it
+// does not clear the saved request to show the queue.
+func (a *app) queueOverlay(c *ui.Context) {
+	ui.Overlay(c, func() {
+		t := c.Theme()
+		panel := ui.Column(c).Absolute().Width(240).Padding(12).Gap(6).Radius(12).Background(t.Surface).Border(1, t.Border)
+		panel.Shadow(0, 8, 24, 0, ui.RGBA(0, 0, 0, 0.18))
+		panel.Right(12).Bottom(92)
+		panel.Children(func() {
+			ui.Text(c, "播放队列").FontSize(13).FontWeight(700)
+			ui.Textf(c, "%d 首", len(a.play.queue.Songs)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "窗口较窄，队列已折叠。加宽窗口后恢复。").FontSize(12).TextColor(t.TextMuted)
+		})
+	})
+}
+
 func (a *app) controlsView(c *ui.Context) {
 	t := c.Theme()
+	mode := a.layoutMode(c)
 	song, has := a.play.queue.Current()
 	title, artist := "未在播放", ""
 	cover := ""
@@ -1918,7 +2263,7 @@ func (a *app) controlsView(c *ui.Context) {
 			if has && a.screen != screenLocal {
 				a.coverArt(c, cover, 42)
 			}
-			ui.Column(c).Width(220).MinWidth(0).Children(func() {
+			ui.Column(c).Grow(1).Shrink(1).Basis(0).MinWidth(0).MaxWidth(220).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, title).FontWeight(600).SingleLine().Shrink(1)
 					if a.playback.State == player.Loading || a.playback.State == player.Buffering {
@@ -1970,22 +2315,7 @@ func (a *app) controlsView(c *ui.Context) {
 						ui.Icon(c, iconQueue).Size(16, 16)
 					})
 				})
-				glyph, tip := iconVolume, "静音"
-				if a.volume <= 0 {
-					glyph, tip = iconVolumeMute, "取消静音"
-				}
-				mute := ui.Button(c, "").Label("静音").Tooltip(tip).Padding(2)
-				mute.Background(ui.Color{}).BorderWidth(0)
-				mute.Children(func() { ui.Icon(c, glyph).Size(16, 16).TextColor(t.TextMuted) })
-				if mute.Clicked() {
-					a.toggleMute()
-				}
-				if ui.Slider(c, &a.volume, 0, 100).Label("音量").Width(110).Changed() {
-					if a.volume > 0 {
-						a.volumeBefore = a.volume
-					}
-					a.control(a.engine.SetVolume(a.volume))
-				}
+				a.volumeControl(c, t, mode.compact)
 			})
 		})
 	})
