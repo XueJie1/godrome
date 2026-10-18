@@ -1143,10 +1143,13 @@ func (a *app) applyTheme(c *ui.Context) *ui.Theme {
 const (
 	sidebarWidthDefault = 220
 	queueWidthDefault   = 280
-	sidebarMinWidth     = 160
+	sidebarMinWidth     = 64
 	queueMinWidth       = 200
 	sidebarMaxWidth     = 360
 	queueMaxWidth       = 480
+	// sidebarLabelWidth is the width under which the sidebar draws only
+	// the icons of its entries.
+	sidebarLabelWidth = 140
 	// contentMinWidth is the main page before its own padding. A docked
 	// queue yields to this before it yields to the saved queue width.
 	contentMinWidth = 320
@@ -1205,7 +1208,7 @@ func (a *app) view(c *ui.Context) {
 			a.loginView(c)
 			return
 		}
-		ui.Split(c, &sidebar, func() { a.sidebar(c) }, func() {
+		ui.Split(c, &sidebar, func() { a.sidebar(c, sidebar) }, func() {
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				a.topBar(c)
 				a.message(c)
@@ -1345,20 +1348,29 @@ func (a *app) queuePane(c *ui.Context) {
 	ui.Column(c).Grow(1).MinWidth(0).Padding(12, 12, 8, 4).Children(func() { a.queueView(c) })
 }
 
-func (a *app) sidebar(c *ui.Context) {
+func (a *app) sidebar(c *ui.Context, width float32) {
 	t := c.Theme()
+	// A narrow sidebar keeps the icons and drops the labels and the title,
+	// so the entries stay one icon wide.
+	rail := width < sidebarLabelWidth
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.Surface).Children(func() {
-		ui.Row(c).Padding(14, 10, 8, 16).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Godrome").FontSize(20).FontWeight(700).Grow(1).SingleLine()
-			a.historyButtons(c)
-		})
+		if rail {
+			ui.Column(c).Padding(8, 8, 8, 8).Gap(2).AlignItems(ui.Center).Children(func() {
+				a.historyButtons(c)
+			})
+		} else {
+			ui.Row(c).Padding(14, 10, 8, 16).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Godrome").FontSize(20).FontWeight(700).Grow(1).SingleLine()
+				a.historyButtons(c)
+			})
+		}
 		section := a.screen.nav()
 		if ui.Sidebar(c, &section, func() {
-			ui.SidebarItem(c, "library", nil, "曲库")
-			ui.SidebarItem(c, "albums", nil, "专辑")
-			ui.SidebarItem(c, "starred", nil, "喜爱")
-			ui.SidebarItem(c, "playlists", nil, "歌单")
-			ui.SidebarItem(c, "settings", nil, "设置")
+			navItem(c, "library", iconLibrary, "曲库", width, rail)
+			navItem(c, "albums", iconAlbums, "专辑", width, rail)
+			navItem(c, "starred", iconHeart, "喜爱", width, rail)
+			navItem(c, "playlists", iconPlaylists, "歌单", width, rail)
+			navItem(c, "settings", iconSettings, "设置", width, rail)
 		}).Grow(1).Changed() {
 			switch section {
 			case "library":
@@ -1376,6 +1388,25 @@ func (a *app) sidebar(c *ui.Context) {
 			}
 		}
 	})
+}
+
+// navItem creates one sidebar entry. A rail sidebar drops the label, pads
+// the icon to the middle of the entry, and keeps the name as its tooltip
+// and accessibility label.
+func navItem(c *ui.Context, id string, glyph *ui.SVG, label string, width float32, rail bool) {
+	t := c.Theme()
+	if !rail {
+		ui.SidebarItem(c, id, glyph, label)
+		return
+	}
+	item := ui.SidebarItem(c, id, glyph, "")
+	item.Label(label).Tooltip(label)
+	// The Sidebar pads 2.5 units on each side and the icon is 16 wide.
+	pad := (width - 2*t.Space(2.5) - 16) / 2
+	if pad < t.Space(2) {
+		pad = t.Space(2)
+	}
+	item.PaddingX(pad)
 }
 
 func (a *app) showSettings() {

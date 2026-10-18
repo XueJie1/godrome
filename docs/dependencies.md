@@ -10,7 +10,7 @@
 | github.com/go-text/typesetting | v0.3.5 | BSD-3-Clause/Unlicense；字体排版 |
 | golang.org/x/image | v0.46.0 | BSD-3-Clause；封面解码和缩放 |
 | github.com/zalando/go-keyring | v0.2.8 | MIT；把密码交给系统密钥环。Linux 走 Secret Service，macOS 走登录钥匙串，Windows 走 Credential Manager |
-| Lucide repeat / repeat-1 / arrow-right / disc-3 / chevron-left / chevron-right / heart / sun / moon / monitor / volume-2 / volume-x | 2026-10-11 源文件 | ISC，版权 Lucide Icons and Contributors；播放模式、封面占位、后退和前进、喜欢、设置页外观，以及底栏音量 |
+| Lucide repeat / repeat-1 / arrow-right / disc-3 / chevron-left / chevron-right / heart / sun / moon / monitor / volume-2 / volume-x / library-big / disc-album / list-music / settings | 2026-10-11 源文件；侧栏图标 2026-10-18 源文件 | ISC，版权 Lucide Icons and Contributors；播放模式、封面占位、后退和前进、喜欢、设置页外观、底栏音量，以及侧栏导航 |
 | libmpv | pkg-config 2.5.0，mpv 0.41.0，Arch 包 1:0.41.0-6，ABI libmpv.so.2 | 系统包声明 GPL-2.0-or-later AND LGPL-2.1-or-later；进程内音频播放 |
 | mpv client.h | 本机 2.5.0 头文件副本 `internal/player/mpv_client.h` | ISC，完整版权声明保留；C API ABI |
 | FFmpeg | n9.0.1，运行库 n9.0.2 | 仅用于生成测试样本；不是额外打包依赖 |

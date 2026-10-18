@@ -51,7 +51,7 @@ func Load(path string) (Settings, error) {
 	s.Width = max(800, min(3840, s.Width))
 	s.Height = max(560, min(2160, s.Height))
 	if s.SidebarWidth != 0 {
-		s.SidebarWidth = max(160, min(360, s.SidebarWidth))
+		s.SidebarWidth = max(64, min(360, s.SidebarWidth))
 	}
 	if s.QueueWidth != 0 {
 		s.QueueWidth = max(200, min(480, s.QueueWidth))

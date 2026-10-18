@@ -841,6 +841,40 @@ func TestSidebarDividerKeepsTheMinimum(t *testing.T) {
 	}
 }
 
+func TestSidebarRailDropsLabelsWhenNarrow(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.sidebarWidth = 100
+	tt := ui.NewTester(a.view, 1080, 720)
+	snapshot(t, tt, "sidebar-rail.png")
+	if tt.HasText("Godrome") {
+		t.Fatalf("narrow sidebar still shows the title: %v", tt.Texts())
+	}
+	// The name stays for assistive technology, over the whole entry, and
+	// no label text sits beside the icon.
+	item, ok := tt.Find("曲库")
+	if !ok || item.X > 20 || item.W < 60 {
+		t.Fatalf("narrow sidebar has no icon-only entry: %+v ok=%v", item, ok)
+	}
+	settings, _ := tt.Find("设置")
+	tt.ClickAt(settings.X+settings.W/2, settings.Y+settings.H/2)
+	tt.Frame()
+	if a.screen != screenSettings {
+		t.Fatalf("icon-only entry did not choose its page: screen=%s", a.screen)
+	}
+	a.sidebarWidth = 220
+	tt.Frame()
+	snapshot(t, tt, "sidebar-wide.png")
+	if !tt.HasText("Godrome") {
+		t.Fatalf("wide sidebar lost the title: %v", tt.Texts())
+	}
+	label, ok := tt.Find("曲库")
+	if !ok || label.X < 30 {
+		t.Fatalf("wide sidebar did not show the label beside the icon: %+v ok=%v", label, ok)
+	}
+}
+
 func TestQueueDividerKeepsTheMinimum(t *testing.T) {
 	a, _, _ := testApp(t)
 	a.client = &subsonic.Client{}
