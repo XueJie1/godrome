@@ -1,79 +1,134 @@
-# Godrome 最小原型
+# Godrome
 
-Go + MyGO 原生中文界面，libmpv 在同一进程内播放 Navidrome/Subsonic 音频。
+一个轻量的桌面音乐播放器，连接你自己的 Navidrome / Subsonic 音乐库。
 
-本阶段做什么、暂不做什么及验收边界见 [功能边界](docs/scope.md)。
+原生中文界面，单进程运行：不需要浏览器，也不在后台启动服务。
 
-已实现单服务器登录、专辑分页与曲目、歌曲搜索、喜爱、队列、自动下一曲、暂停恢复、上下曲、进度拖动和音量。窗口聚焦时按空格播放、暂停或继续。封面与专辑/歌曲/喜爱元数据会缓存到磁盘，重新打开或断网时仍能浏览上次内容；顶栏用数据库对勾图标标注离线缓存。Linux 上可作为 MPRIS 服务出现在桌面媒体组件中，显示曲目、歌手、专辑、封面、时长和进度，并接受播放控制。没有离线音频下载、歌单编辑、歌词或托盘。
+## 能做什么
 
-## 运行
+- 浏览专辑、播放整张专辑、搜索歌曲
+- 支持 MP3 / FLAC / AAC / Opus
+- 播放队列：播放、加入队列、上一首/下一首、循环
+- 标记喜欢的歌曲、专辑和歌手
+- 进度拖动、音量、一键静音
+- 浅色 / 深色 / 跟随系统，可换主题色
+- 十段均衡器和预设
+- 封面和元数据可离线浏览（音频不缓存）
+- Linux 上支持系统媒体控制（MPRIS）
+- 直接播放本地音频文件
 
-需要 **Go 1.27.1、C 编译器、GTK 3（Linux）和 libmpv 2**。Go 依赖已固定。
+暂不支持：歌单编辑（目前只有入口）、歌词、托盘、随机播放、离线下载音频。
+
+## 快速开始
+
+### 1. 安装系统依赖
+
+需要 **Go 1.27.1**、**C 编译器**、**GTK 3**（Linux）和 **libmpv 2**。
+
+Linux 已完成实机验证；Windows 和 macOS 可以构建，但原生桌面验收尚未完成。
+
+| 系统 | 安装命令 |
+| --- | --- |
+| Arch Linux | `sudo pacman -S go gcc gtk3 mpv` |
+| Debian / Ubuntu | 安装 Go 1.27.1，然后 `sudo apt install build-essential libgtk-3-0 libmpv2`（较新发行版 GTK 包名为 `libgtk-3-0t64`） |
+| macOS | 安装 Go 1.27.1 和 Xcode Command Line Tools，然后 `brew install mpv` |
+| Windows | 安装 Go 1.27.1 与 MinGW-w64 GCC，把 `mpv-2.dll`（或 `libmpv-2.dll`）及其依赖放到 exe 同目录 |
+
+### 2. 构建并启动
 
 ```sh
 make build
 ./build/godrome
 ```
 
-登录界面填服务器完整地址、用户名和密码。默认记住密码：登录成功后写入系统密钥环，下次启动自动登录。退出登录在设置页，会删除已保存的密码。支持 `/music` 等路径前缀。配置默认存放在系统配置目录的 `godrome/settings.json`，保存地址、用户名、音量、窗口尺寸、侧栏宽度、队列宽度、主题色、外观、均衡器、缓存上限和离线回退开关；密码不写入该文件。
-
-封面和元数据缓存在系统缓存目录的 `godrome/cache`，默认上限 256 MiB。设置页的「存储」标签可以关闭离线回退、调整上限、查看占用或清除缓存；清除后封面会重新下载。
-
-```sh
-make samples
-./build/godrome testdata/audio/sample.mp3 testdata/audio/sample.flac
-```
-
-命令行可打开本地音频；加 `--autoplay` 自动开始，`--audio-output null` 使用测试无声输出。运行选项必须放在文件路径之前。
-
-## 系统依赖
-
-| 系统 | 安装方式 |
-| --- | --- |
-| Arch Linux | `sudo pacman -S go gcc gtk3 mpv ffmpeg` |
-| Debian/Ubuntu | 安装 Go 1.27.1，然后 `sudo apt install build-essential libgtk-3-0 libmpv2 ffmpeg`（较新发行版 GTK 包名为 `libgtk-3-0t64`） |
-| macOS | 安装 Go 1.27.1 和 Xcode Command Line Tools，然后 `brew install mpv ffmpeg`；加载器支持 Apple Silicon/Intel Homebrew 路径 |
-| Windows | 安装 Go 1.27.1 与 MinGW-w64 GCC，获取与应用架构相同的 libmpv 2 共享库；将 `mpv-2.dll` 或 `libmpv-2.dll` 及其依赖放在 exe 同目录 |
-
-Windows 构建（PowerShell）：
+Windows（PowerShell）：
 
 ```powershell
 $env:CGO_ENABLED = '1'
 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/egoist/mygo.production=1" -o build/godrome.exe .
 ```
 
-缺少 libmpv 时仍能启动和浏览，首次播放会显示安装提示。`CGO_ENABLED=0` 构建用于检查 UI 跨平台编译，不能播放。MyGO v0.2.15 的打包 CLI 默认关闭 cgo，因此使用上述构建入口。
+### 3. 登录
 
-## 验证
+在登录页填写：
+
+| 项目 | 说明 |
+| --- | --- |
+| 服务器地址 | 完整地址，例如 `https://music.example.com`；有路径前缀也可写 `https://example.com/navidrome` |
+| 用户名 / 密码 | 你的 Subsonic 账号 |
+
+默认勾选「记住密码」。登录成功后密码保存在系统密钥环，下次启动自动登录。退出登录在 **设置 → 账号**，会同时删除已保存的密码。
+
+## 快捷键
+
+| 操作 | 按键 |
+| --- | --- |
+| 播放 / 暂停 / 继续 | `空格`（窗口聚焦时） |
+| 打开选中项 / 播放 | `Enter` |
+| 移动选择 | 方向键 |
+
+焦点在输入框、按钮等控件上时，空格留给该控件。
+
+## 日常使用
+
+- **侧栏**：曲库、专辑、喜爱、歌单、设置。窗口变窄时自动收成图标栏。
+- **顶部搜索**：输入停止 300 ms 后搜索，最多返回 100 首；清空搜索回到原页面。
+- **右侧队列**：窗口窄于 860 时会折叠，变宽后自动恢复。
+- **设置**：外观、声音、账号、存储四个标签。主题、均衡器和缓存设置会保存到下次启动。
+- **离线浏览**：服务器连不上但之前缓存过内容时，页面照常显示，顶栏出现「离线缓存」图标。可在 **设置 → 存储** 关闭该行为、调整缓存上限或清除缓存。
+
+## 播放本地音频
 
 ```sh
-make check test
-make test-audio                    # FFmpeg 生成四种样本，libmpv 无声输出测试
-make test-mpris                    # 私有会话总线上验证 MPRIS 属性和控制
-python3 scripts/navidrome-test.py /path/to/navidrome
+./build/godrome song.mp3 album.flac
+./build/godrome --autoplay song.flac
 ```
 
-最后一条命令使用 Navidrome 0.64.2，在临时目录建立样本曲库和随机测试账号，监听 loopback，测试结束销毁实例；不依赖个人账号。脚本不自动下载安装服务器。
+运行选项要放在文件路径前面。
 
-真实服务器测试是可选的，只读取专辑、搜索和流。通过环境变量 `GODROME_TEST_SERVER`、`GODROME_TEST_USER`、`GODROME_TEST_PASSWORD` 提供本次测试凭据，再运行 `go test -race -run '^TestRealNavidrome$' -v .`。不要把密码写进文件或报告。
+## 配置文件与缓存位置
 
-截图使用模拟曲库，可复现：
+| 内容 | 位置 |
+| --- | --- |
+| 设置 | 系统配置目录下的 `godrome/settings.json`（Linux：`~/.config/godrome/`） |
+| 封面与元数据缓存 | 系统缓存目录下的 `godrome/cache`（Linux：`~/.cache/godrome/cache`），默认上限 256 MiB |
+| 密码 | 仅保存在系统密钥环，不写入 JSON |
+
+缓存可以随时在设置页清除；清除后封面会重新下载。
+
+## 常见问题
+
+**第一次播放提示缺少 libmpv**
+
+安装系统 libmpv 后重启应用。缺少 libmpv 时仍能登录和浏览，只是不能播放。Go 的 `CGO_ENABLED=0` 构建同样无法播放。
+
+**登录失败**
+
+- 确认地址是完整 URL，包含 `http://` 或 `https://`
+- 确认账户可以在浏览器或官方客户端登录
+- 如果服务在反向代理后面，加上路径前缀
+
+**断网后打不开曲库**
+
+只有之前浏览过的专辑和歌曲能离线显示。音频不缓存，离线时不能播放未缓存过的歌曲。
+
+**想从源码运行，不做构建**
 
 ```sh
-GODROME_UI_EVIDENCE=docs/evidence/ui go test -run TestLoginAndOnlineViews .
+make run
 ```
 
-## 测量与当前状态
+## 开发与验证
 
 ```sh
-make measure                      # 空窗口，每次 30 秒，共三次
-python3 scripts/measure.py --seconds 30 --runs 3 --output docs/evidence/memory/playback -- ./build/godrome --autoplay /path/to/audio.flac
+make check        # 格式检查 + go vet
+make test         # 单元测试与 UI 测试
+make test-audio   # libmpv 播放测试（需要 ffmpeg 生成样本）
+make test-mpris   # Linux MPRIS 测试
 ```
 
-Sway 下加 `--sway-size` 固定被测窗口为 1080×720；其他桌面应手动固定尺寸和缩放。可用 `--metrics /tmp/heap.csv` 单独记录 Go 堆。测量不强制 GC。
-
-本次交付是最小可运行实现。已完成与待完成的证据、内存基线和限制见 [原型报告](docs/report.md)，完整验证计划仍以 [intent.md](docs/intent.md) 为准。
-
-补充验收与独立隐藏显示环境的测量方法见 [验收记录](docs/acceptance.md)。可用 `make acceptance-build` 构建单独的验收工具；`python3 scripts/headless-acceptance.py --output docs/evidence/acceptance-new` 顺序执行三轮 30 分钟切歌和各场景三次测量，全程无声，不操作当前桌面。运行前用 `GODROME_SAMPLE_DURATION=20 sh scripts/audio-samples.sh testdata/acceptance-audio` 生成样本。
-
-真实服务器只读测试也可使用 `python3 scripts/real-server-test.py <服务器地址> <用户名>`，在终端无回显输入密码。`--native` 会打开有声原生窗口，测试音量上限 50%；仅在方便操作桌面时使用，不与隐藏测量混为同一验收。
+- 代码结构与各文件职责：[README-dev.md](README-dev.md)
+- 仓库约定：[AGENTS.md](AGENTS.md)
+- 行为规格：[docs/spec.md](docs/spec.md)
+- 功能边界：[docs/scope.md](docs/scope.md)
+- 验收与测量：[docs/acceptance.md](docs/acceptance.md)、[docs/report.md](docs/report.md)

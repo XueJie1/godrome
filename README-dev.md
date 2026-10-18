@@ -68,7 +68,7 @@ godrome/
 | `AGENTS.md` | 仓库硬约定：技术栈、安全、必须同步文档、检查命令。 |
 | `CLAUDE.md` | 只指向 `AGENTS.md` 与 `docs/spec.md`。 |
 | `ARCHITECTURE.md` | 目标依赖方向、状态归属表、禁止事项、重构顺序。 |
-| `README.md` | 用户向：安装依赖、运行、验证、测量。 |
+| `README.md` | 用户向：安装依赖、快速开始、快捷键、离线缓存与常见问题。 |
 | `Makefile` | `run / build / check / test / samples / test-audio / measure / acceptance-build`。 |
 | `mygo.json` | MyGO 应用名、标识、版本、输出目录。 |
 
@@ -224,5 +224,16 @@ make test       # go test -race ./...
 make test-audio # 生成样本并跑 libmpv 无声集成测试
 make run        # 直接运行
 ```
+
+验证与测量（细节见 `docs/acceptance.md`、`docs/report.md`）：
+
+```sh
+python3 scripts/navidrome-test.py /path/to/navidrome      # 临时 Navidrome 闭环
+python3 scripts/real-server-test.py <地址> <用户名>        # 真实服务器只读测试
+GODROME_UI_EVIDENCE=docs/evidence/ui go test -run TestLoginAndOnlineViews .
+make measure                                              # 空窗口内存基线
+```
+
+`online_integration_test.go` 需要 `GODROME_TEST_SERVER`、`GODROME_TEST_USER`、`GODROME_TEST_PASSWORD`，再运行 `go test -race -run '^TestRealNavidrome$' -v .`。不要把密码写进文件或报告。
 
 约定：改行为要同步改 `docs/spec.md`、相关文档和代码，放在同一次提交；`AGENTS.md` 是最终约束。
