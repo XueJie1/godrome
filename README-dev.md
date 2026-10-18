@@ -204,6 +204,7 @@ godrome/
 | `testdata/acceptance-audio/` | 长样本，供 headless 验收（git 忽略）。 |
 | `build/` | `build/godrome` 与 `build/godrome-acceptance`（git 忽略）。 |
 | `.github/workflows/check.yml` | Ubuntu/Windows/macOS：`go vet`、`go test -race`、release build；Linux 另跑 libmpv 音频测试。 |
+| `.github/workflows/release.yml` | 推送 `v*` 标签时在三个平台构建二进制，上传到草稿 Release，全部成功后再发布。 |
 
 ---
 

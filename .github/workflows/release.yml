@@ -1,0 +1,83 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.ref_name }}
+  GOFLAGS: -buildvcs=false
+  LDFLAGS: -s -w -X github.com/egoist/mygo.production=1
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --draft --title "Godrome $TAG" --generate-notes
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            ext: ''
+          - os: windows-latest
+            target: windows-amd64
+            ext: '.exe'
+          - os: macos-latest
+            target: darwin-arm64
+            ext: ''
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: '1'
+      TARGET: ${{ matrix.target }}
+      EXT: ${{ matrix.ext }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Build
+        shell: bash
+        run: go build -trimpath -ldflags="$LDFLAGS" -o "build/godrome$EXT" .
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="dist/godrome-$TAG-$TARGET"
+          mkdir -p "$stage"
+          cp "build/godrome$EXT" LICENSE README.md "$stage/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "dist/godrome-$TAG-$TARGET.zip" "$stage" > /dev/null
+            echo "asset=dist/godrome-$TAG-$TARGET.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "dist/godrome-$TAG-$TARGET.tar.gz" -C dist "godrome-$TAG-$TARGET"
+            echo "asset=dist/godrome-$TAG-$TARGET.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - name: Upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$asset" --clobber
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false
