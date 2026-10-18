@@ -19,6 +19,6 @@
 
 Go 间接依赖以 `go.mod`/`go.sum` 的锁定内容为准，不在每次构建升级。系统 libmpv 不随应用下载、复制或打包。缺失时播放器显示错误。
 
-MyGO 官方模板来源：[native 模板](https://github.com/egoist/mygo/tree/v0.2.15/cmd/mygo/template/native)。libmpv 核心默认 GPLv2+，禁用 GPL 功能的构建为 LGPLv2+；客户 API 头文件为 ISC，见 [mpv client API](https://github.com/mpv-player/mpv/blob/v0.41.0/include/mpv/client.h)。当前系统包不能据头文件许可证视作 ISC 核心。本次原型不发布分发包，正式分发前需确定应用许可与所使用的 libmpv 构建。
+MyGO 官方模板来源：[native 模板](https://github.com/egoist/mygo/tree/v0.2.15/cmd/mygo/template/native)。libmpv 核心默认 GPLv2+，禁用 GPL 功能的构建为 LGPLv2+；客户 API 头文件为 ISC，见 [mpv client API](https://github.com/mpv-player/mpv/blob/v0.41.0/include/mpv/client.h)。当前系统包不能据头文件许可证视作 ISC 核心。应用源码采用 MIT 许可证（见根目录 `LICENSE`）；libmpv 由用户系统提供，其许可证不因本项目而改变。分发二进制前需确认所链接的 libmpv 构建及其许可证义务。
 
 临时 Navidrome 测试使用 [0.64.2 官方 Linux amd64 归档](https://github.com/navidrome/navidrome/releases/tag/v0.64.2)，SHA-256：`fdd87fd107818667c2c50bc24dc6ce856962c795b3822a91f95c066cfad2c53e`。

@@ -132,3 +132,7 @@ make test-mpris   # Linux MPRIS 测试
 - 行为规格：[docs/spec.md](docs/spec.md)
 - 功能边界：[docs/scope.md](docs/scope.md)
 - 验收与测量：[docs/acceptance.md](docs/acceptance.md)、[docs/report.md](docs/report.md)
+
+## 许可证
+
+本项目使用 MIT 许可证，见 [LICENSE](LICENSE)。libmpv 由系统提供，遵循其自身的许可证。

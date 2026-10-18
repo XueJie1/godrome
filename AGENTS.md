@@ -11,4 +11,4 @@ Claude/Codex 共同遵守本文件。目标和边界见 `docs/intent.md`；本�
 - 每次改代码都同步更新对应文档，并和代码放在同一次提交里。可观察行为写入 `docs/spec.md`，目标与界面写入 `docs/intent.md`，验收与测量写入 `docs/acceptance.md`。不要只改代码，也不要把未记录的改动留在工作区。
 - `go tool mygo build` 在固定版本中默认禁用 cgo；播放构建用本项目的 `make build`，或显式 `CGO_ENABLED=1 go build`。
 - 测试中的无声输出、UI tester、跨平台无 cgo 构建和真实桌面操作必须分开报告。
-- 不主动 GC 美化内存数据，不把短时基线写成长期稳定性验收。不公开发布或自动上传。
+- 不主动 GC 美化内存数据，不把短时基线写成长期稳定性验收。

@@ -19,4 +19,4 @@
 - [x] 独立 headless Sway 原生窗口中，浏览大量专辑/滚动封面/四格式播放/暂停各 3×60 秒、切歌 3×30 分钟；含 CPU/OpenGL 诊断与完整 RSS/PSS/Go 堆曲线。全部无声输出，与真实桌面证据分开。
 - [ ] Windows/macOS 桌面播放和内存数据。
 
-统一入口：`make build check test test-audio measure acceptance-build`。补充验收与不干扰桌面的测量入口见 [acceptance.md](acceptance.md)，原始证据与限制见 `report.md`；不公开发布。
+统一入口：`make build check test test-audio measure acceptance-build`。补充验收与不干扰桌面的测量入口见 [acceptance.md](acceptance.md)，原始证据与限制见 `report.md`。

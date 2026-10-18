@@ -65,6 +65,7 @@ godrome/
 | `nav_test.go` | 历史记录单元测试（前进清空、同页不重复、搜索改字、恢复位置）。 |
 | `equalizer_test.go` | 均衡器滤镜字符串与预设曲线测试。 |
 | `online_integration_test.go` | 真实 Navidrome 只读测试；需 `GODROME_TEST_*` 环境变量，平时跳过。 |
+| `LICENSE` | MIT 许可证（应用源码）。 |
 | `AGENTS.md` | 仓库硬约定：技术栈、安全、必须同步文档、检查命令。 |
 | `CLAUDE.md` | 只指向 `AGENTS.md` 与 `docs/spec.md`。 |
 | `ARCHITECTURE.md` | 目标依赖方向、状态归属表、禁止事项、重构顺序。 |
