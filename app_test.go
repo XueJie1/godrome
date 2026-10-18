@@ -876,7 +876,7 @@ func TestSidebarRailDropsLabelsWhenNarrow(t *testing.T) {
 	}
 }
 
-func TestQueueDividerKeepsTheMinimum(t *testing.T) {
+func TestQueueDividerClosesAtTheRightEdge(t *testing.T) {
 	a, _, _ := testApp(t)
 	a.client = &subsonic.Client{}
 	a.screen = screenLibrary
@@ -890,9 +890,15 @@ func TestQueueDividerKeepsTheMinimum(t *testing.T) {
 	tt.Press(x, y)
 	tt.Move(x+400, y)
 	tt.Release(x+400, y)
-	if a.queueWidth != queueMinWidth {
-		t.Fatalf("queue width = %v, want %v", a.queueWidth, queueMinWidth)
+	if a.queueVisible {
+		t.Fatal("dragging past the queue minimum did not close it")
 	}
+	if a.queueWidth != 280 {
+		t.Fatalf("closed queue width = %v, want the saved 280", a.queueWidth)
+	}
+	// Reopening restores that width, and the divider still widens the pane.
+	a.queueVisible = true
+	tt.Frame()
 	x = 1080 - a.queueWidth - 1 + 2
 	tt.Press(x, y)
 	tt.Move(x-400, y)
@@ -979,6 +985,31 @@ func TestQueueSelectionClearsTheScrollbar(t *testing.T) {
 	}
 	if accent+6 >= bar {
 		t.Fatalf("queue selection reaches the scrollbar: highlight ends at %d, thumb starts at %d, row %v", accent, bar, row)
+	}
+}
+
+func TestQueuePlayMarkHugsTheRightEdge(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.queueVisible = true
+	for i := range 4 {
+		a.play.queue.Add(subsonic.Song{ID: fmt.Sprint(i), Title: fmt.Sprintf("队列曲目 %d", i)})
+	}
+	tt := ui.NewTester(a.view, 1080, 720)
+	row, ok := tt.Find("队列曲目 0")
+	if !ok {
+		t.Fatal("queue row not shown")
+	}
+	play, ok := tt.Find("播放此曲")
+	if !ok {
+		t.Fatal("queue play mark not shown")
+	}
+	// The row's own right padding is 2; the scrollbar gutter is what
+	// remains. A toolbar here used to reserve room for an overflow button
+	// and leave about 40 DIP after the mark.
+	if play.X+play.W < row.X+row.W-8 {
+		t.Fatalf("play mark at %v, row ends at %v", play, row.X+row.W)
 	}
 }
 
@@ -1241,6 +1272,78 @@ func TestSearchLimitSaysOneHundred(t *testing.T) {
 	tt := ui.NewTester(a.view, 1080, 720)
 	if !tt.HasText("最多显示 100 首") {
 		t.Fatalf("search cap: %v", tt.Texts())
+	}
+}
+
+func TestSearchFieldKeepsChineseCopyAndClears(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+	}))
+	defer s.Close()
+	a, _, _ := testApp(t)
+	a.client, _ = subsonic.New(s.URL, "u", "p")
+	a.screen = screenLibrary
+	tt := ui.NewTester(a.view, 1080, 720)
+	tt.Frame()
+	if !tt.HasText("搜索歌曲") {
+		t.Fatalf("search placeholder: %v", tt.Texts())
+	}
+	if err := tt.Click("搜索歌曲"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("夜")
+	tt.Frame()
+	if a.query != "夜" || a.screen != screenSearch {
+		t.Fatalf("query=%q screen=%s", a.query, a.screen)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.query != "" {
+		t.Fatalf("escape left %q", a.query)
+	}
+	if err := tt.Click("搜索歌曲"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("曲")
+	tt.Frame()
+	if err := tt.Click("清除搜索"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.query != "" {
+		t.Fatalf("clear left %q", a.query)
+	}
+}
+
+func TestLibraryPageButtonsMoveThePage(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"1","title":"下一页歌曲"}]}}}`)
+	}))
+	defer s.Close()
+	a, _, updates := testApp(t)
+	a.client, _ = subsonic.New(s.URL, "u", "p")
+	a.screen = screenLibrary
+	a.more = true
+	tt := ui.NewTester(a.view, 1080, 720)
+	if !tt.HasText("第 1 页") {
+		t.Fatalf("page header: %v", tt.Texts())
+	}
+	if err := tt.Click("下一页"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, updates)
+	tt.Frame()
+	if a.songOffset != subsonic.PageSize {
+		t.Fatalf("song offset = %d, want %d", a.songOffset, subsonic.PageSize)
+	}
+	if !tt.HasText("第 2 页") || !tt.HasText("下一页歌曲") {
+		t.Fatalf("next page did not show: %v", tt.Texts())
+	}
+	if _, ok := tt.Find("上一页"); !ok {
+		t.Fatal("previous page button lost its name")
+	}
+	if tt.HasText("播放本页") {
+		t.Fatal("library still offers a play-page action")
 	}
 }
 

@@ -1225,6 +1225,18 @@ func listScrollGutter(t *ui.Theme) float32 {
 	return w + 16
 }
 
+// queueScrollGutter is the narrower gutter of the queue pane. It leaves
+// the scroll thumb clear of the selection, and the play mark keeps close
+// to the row's right edge so a long title gets the width. The thumb
+// starts 3 DIPs in and is w wide, so w+10 leaves a gap of 7.
+func queueScrollGutter(t *ui.Theme) float32 {
+	w := t.ScrollbarWidth
+	if w <= 0 {
+		w = 6
+	}
+	return w + 10
+}
+
 func (a *app) view(c *ui.Context) {
 	// Space is a window shortcut, so it does not reach page scrolling. A
 	// focused text input still takes it as text, and a focused button or
@@ -1254,7 +1266,14 @@ func (a *app) view(c *ui.Context) {
 					// width is what is left, so the drag matches the pane on
 					// the right.
 					ui.Split(c, &content, func() { a.mainColumn(c) }, func() { a.queuePane(c) }).Grow(1).MinHeight(0)
-					a.queueWidth = a.widthFromContent(c, content)
+					if width := a.widthFromContent(c, content); width < queueMinWidth {
+						// The divider was dragged past the queue's minimum, or
+						// its arrows were held past it. Close the queue and
+						// keep the last usable width for the next open.
+						a.queueVisible = false
+					} else {
+						a.queueWidth = width
+					}
 				} else {
 					a.mainColumn(c)
 				}
@@ -1382,7 +1401,9 @@ func (a *app) mainColumn(c *ui.Context) {
 }
 
 func (a *app) queuePane(c *ui.Context) {
-	ui.Column(c).Grow(1).MinWidth(0).Padding(12, 12, 8, 4).Children(func() { a.queueView(c) })
+	// The list's own gutter keeps the scrollbar clear, so the pane does
+	// not need a right margin: titles get that width instead.
+	ui.Column(c).Grow(1).MinWidth(0).Padding(12, 0, 8, 4).Children(func() { a.queueView(c) })
 }
 
 func (a *app) sidebar(c *ui.Context, width float32) {
@@ -1903,7 +1924,7 @@ func (a *app) topBar(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).Padding(12, 22, 8, 22).AlignItems(ui.Center).Children(func() {
 		if a.client != nil {
-			if ui.SearchField(c, &a.query).Label("搜索歌曲").Placeholder("搜索歌曲").Grow(1).MaxWidth(460).Changed() {
+			if a.searchField(c) {
 				a.search()
 			}
 		} else {
@@ -1913,6 +1934,60 @@ func (a *app) topBar(c *ui.Context) {
 			ui.Icon(c, iconOffline).Size(14, 14).TextColor(t.TextMuted).Label("离线缓存").Tooltip("离线缓存")
 		}
 	})
+}
+
+// searchField is the top bar's search input. ui.SearchField shows the
+// framework's English "Search" while empty and could not take another
+// placeholder in this version, so this is a plain text input in the same
+// field look. The magnifier, the clear button, and Escape keep their
+// behavior.
+func (a *app) searchField(c *ui.Context) bool {
+	t := c.Theme()
+	changed, cleared := false, false
+	var input *ui.Element
+	field := ui.Row(c).Grow(1).MaxWidth(460).AlignItems(ui.Center).Gap(6).
+		Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).
+		Background(t.Surface).Border(1, t.Border).Cursor(ui.CursorText)
+	field.Children(func() {
+		ui.Icon(c, iconSearch).Size(15, 15).TextColor(t.TextMuted).Shrink(0)
+		input = ui.TextInputBase(c, &a.query).Label("搜索歌曲").Placeholder("搜索歌曲").Grow(1).MinWidth(120)
+		if a.query != "" {
+			clear := ui.Box(c).Size(16, 16).Radius(8).Background(t.TextMuted.Alpha(0.5)).
+				Cursor(ui.CursorPointer).Label("清除搜索").Role(ui.RoleButton)
+			clear.Draw(func(p *ui.Painter, r ui.Rect) {
+				k := r.W * 0.3
+				var x ui.Path
+				x.MoveTo(r.X+k, r.Y+k).LineTo(r.X+r.W-k, r.Y+r.H-k).
+					MoveTo(r.X+r.W-k, r.Y+k).LineTo(r.X+k, r.Y+r.H-k)
+				p.StrokePath(&x, 1.5, t.Background)
+			})
+			if clear.Clicked() {
+				cleared = true
+			}
+		}
+	})
+	// TextInputBase has no border of its own, so the field carries the
+	// focus and hover border the framework's text inputs draw.
+	if input.Focused() {
+		field.BorderColor(t.Accent)
+	} else if field.Hovered() {
+		field.BorderColor(t.Border.Mix(t.Text, 0.25))
+	}
+	if field.Clicked() {
+		input.Focus()
+	}
+	if input.Changed() {
+		changed = true
+	}
+	if a.query != "" && input.Shortcut(0, ui.KeyEscape) {
+		cleared = true
+	}
+	if cleared {
+		a.query = ""
+		input.Focus()
+		changed = true
+	}
+	return changed
 }
 
 // cacheScreen lists the pages that can be filled from the disk cache.
@@ -2022,9 +2097,20 @@ func (a *app) albumStarButton(c *ui.Context, album subsonic.Album) {
 
 func (a *app) albumView(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).AlignItems(ui.End).Padding(6, 2, 12, 2).Children(func() {
-		ui.Text(c, "专辑").FontSize(30).FontWeight(700).Grow(1)
-		ui.Textf(c, "第 %d 页", a.pageOffset/subsonic.PageSize+1).TextColor(t.TextMuted)
+	ui.Row(c).AlignItems(ui.Center).Gap(8).Padding(8, 2, 16, 2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, "专辑").FontSize(30).FontWeight(700).SingleLine()
+			ui.Textf(c, "本页 %d 张", len(a.albums)).TextColor(t.TextMuted)
+		})
+		a.pager(c, a.pageOffset/subsonic.PageSize+1, !a.busy && a.pageOffset != 0, !a.busy && a.more, func() {
+			a.browse(a.pageOffset - subsonic.PageSize)
+		}, func() {
+			a.browse(a.pageOffset + subsonic.PageSize)
+		})
+		if a.iconButton(c, iconRefresh, "刷新", false, a.busy) {
+			a.pages = nil
+			a.browse(a.pageOffset)
+		}
 	})
 	a.albumsGrid.Selected = &a.selectedAlbum
 	a.albumsGrid.Key = func(i int) any { return a.albums[i].ID }
@@ -2054,18 +2140,6 @@ func (a *app) albumView(c *ui.Context) {
 	if !a.busy && len(a.albums) == 0 {
 		ui.Text(c, "没有专辑").TextColor(t.TextMuted).Padding(12)
 	}
-	ui.Row(c).Gap(8).Padding(10, 0, 4, 0).Children(func() {
-		if ui.Button(c, "上一页").Disabled(a.busy || a.pageOffset == 0).Clicked() {
-			a.browse(a.pageOffset - subsonic.PageSize)
-		}
-		if ui.Button(c, "下一页").Disabled(a.busy || !a.more).Clicked() {
-			a.browse(a.pageOffset + subsonic.PageSize)
-		}
-		if ui.Button(c, "刷新").Disabled(a.busy).Clicked() {
-			a.pages = nil
-			a.browse(a.pageOffset)
-		}
-	})
 	if openID != "" {
 		a.openAlbum(openID)
 	}
@@ -2087,28 +2161,35 @@ func (a *app) songView(c *ui.Context) {
 		empty = "没有找到与「" + a.query + "」匹配的歌曲"
 	}
 	a.songList(c, empty)
-	if a.screen == screenLibrary {
-		ui.Row(c).Gap(8).Padding(10, 0, 4, 0).Children(func() {
-			if ui.Button(c, "上一页").Disabled(a.busy || a.songOffset == 0).Clicked() {
-				a.loadSongs(a.songOffset - subsonic.PageSize)
-			}
-			if ui.Button(c, "下一页").Disabled(a.busy || !a.more).Clicked() {
-				a.loadSongs(a.songOffset + subsonic.PageSize)
-			}
-		})
-	}
 }
 
 func (a *app) libraryHeader(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).AlignItems(ui.End).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Gap(8).MinWidth(0).Padding(8, 2, 16, 2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, "曲库").FontSize(30).FontWeight(700).SingleLine()
 			ui.Textf(c, "本页 %d 首", len(a.songs)).TextColor(t.TextMuted)
-			ui.Textf(c, "第 %d 页", a.songOffset/subsonic.PageSize+1).TextColor(t.TextMuted)
 		})
-		if ui.Button(c, "播放本页").Disabled(a.busy || len(a.songs) == 0).Clicked() {
-			a.playSongs(0)
+		a.pager(c, a.songOffset/subsonic.PageSize+1, !a.busy && a.songOffset != 0, !a.busy && a.more, func() {
+			a.loadSongs(a.songOffset - subsonic.PageSize)
+		}, func() {
+			a.loadSongs(a.songOffset + subsonic.PageSize)
+		})
+	})
+}
+
+// pager is the page position and its two chevrons. The text names stay as
+// labels and tooltips, so the buttons keep a name for the keyboard and
+// assistive technology while the header stays quiet.
+func (a *app) pager(c *ui.Context, page int, prevEnabled, nextEnabled bool, prev, next func()) {
+	t := c.Theme()
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+		ui.Textf(c, "第 %d 页", page).TextColor(t.TextMuted)
+		if a.iconButton(c, iconBack, "上一页", false, !prevEnabled) {
+			prev()
+		}
+		if a.iconButton(c, iconForward, "下一页", false, !nextEnabled) {
+			next()
 		}
 	})
 }
@@ -2120,9 +2201,10 @@ func (a *app) searchHeader(c *ui.Context) {
 		if a.query != "" {
 			ui.Text(c, a.query).TextColor(t.TextMuted).SingleLine()
 		}
-		ui.Textf(c, "本次返回 %d 首", len(a.songs)).TextColor(t.TextMuted)
 		if len(a.songs) == subsonic.PageSize {
-			ui.Text(c, "最多显示 100 首").FontSize(12).TextColor(t.TextMuted)
+			ui.Textf(c, "本次返回 %d 首，最多显示 100 首", len(a.songs)).TextColor(t.TextMuted)
+		} else {
+			ui.Textf(c, "本次返回 %d 首", len(a.songs)).TextColor(t.TextMuted)
 		}
 		if a.searching {
 			ui.Text(c, a.status).FontSize(12).TextColor(t.TextMuted)
@@ -2151,7 +2233,11 @@ func (a *app) albumHeader(c *ui.Context) {
 			ui.Text(c, head.Artist).TextColor(t.TextMuted)
 		}
 		ui.Textf(c, "%d 首", len(a.songs)).TextColor(t.TextMuted)
-		if ui.Button(c, "播放").Disabled(a.busy || len(a.songs) == 0).Clicked() {
+		if ui.PrimaryButton(c, "").Label("播放").Tooltip("播放专辑").Gap(6).AlignSelf(ui.Start).
+			Disabled(a.busy || len(a.songs) == 0).Children(func() {
+			ui.Icon(c, iconPlay).Size(14, 14)
+			ui.Text(c, "播放").SingleLine()
+		}).Clicked() {
 			a.playSongs(0)
 		}
 	}
@@ -2216,13 +2302,15 @@ func (a *app) songList(c *ui.Context, emptyTitle string) {
 		// scrollbar. The two actions sit in that gutter, against the edge.
 		gutter := listScrollGutter(t)
 		ui.Row(c).Padding(7, 0, 7, 8).Gap(12).AlignItems(ui.Center).Children(func() {
-			mark := fmt.Sprintf("%d", i+1)
 			if playing {
-				mark = "▶"
-			}
-			num := ui.Text(c, mark).Width(28).TextAlign(ui.End).TextColor(t.TextMuted).FontFeatures("tnum")
-			if playing && a.selectedSong != i {
-				num.TextColor(t.Accent)
+				ui.Row(c).Width(28).Justify(ui.End).Shrink(0).Children(func() {
+					mark := ui.Icon(c, iconPlay).Size(10, 10)
+					if a.selectedSong != i {
+						mark.TextColor(t.Accent)
+					}
+				})
+			} else {
+				ui.Textf(c, "%d", i+1).Width(28).TextAlign(ui.End).TextColor(t.TextMuted).FontFeatures("tnum")
 			}
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				name := ui.Text(c, song.Title).SingleLine()
@@ -2307,7 +2395,7 @@ func (a *app) queueView(c *ui.Context) {
 	list := ui.List(c, &a.queueList, len(a.play.queue.Songs), func(i int) {
 		song := a.play.queue.Songs[i]
 		current := i == a.play.queue.Index
-		ui.Row(c).Padding(5, 8).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Padding(5, 2, 5, 8).Gap(8).AlignItems(ui.Center).Children(func() {
 			if current {
 				ui.Icon(c, iconPlay).Size(11, 11).TextColor(t.Accent)
 			} else {
@@ -2318,15 +2406,18 @@ func (a *app) queueView(c *ui.Context) {
 				name.TextColor(t.Accent).FontWeight(600)
 			}
 			index := i
-			ui.Toolbar(c, func() {
-				if ui.Button(c, "").Label("播放此曲").Tooltip("播放此曲").Children(func() {
-					ui.Icon(c, iconPlay).Size(14, 14)
-				}).Clicked() {
-					chosen = index
-				}
-			})
+			// A toolbar would reserve room for its overflow button and leave
+			// a gap after the mark. This is the same borderless button the
+			// song rows use, so the mark sits at the row's right edge.
+			play := ui.Button(c, "").Label("播放此曲").Tooltip("播放此曲").Padding(2)
+			play.Background(ui.Color{}).BorderWidth(0)
+			if play.Children(func() {
+				ui.Icon(c, iconPlay).Size(14, 14)
+			}).Clicked() {
+				chosen = index
+			}
 		})
-	}).Padding(0, listScrollGutter(t), 0, 0).Grow(1).Children(func() {
+	}).Padding(0, queueScrollGutter(t), 0, 0).Grow(1).Children(func() {
 		if len(a.play.queue.Songs) == 0 {
 			ui.Text(c, "队列为空").TextColor(t.TextMuted).Padding(8, 10)
 		}
@@ -2475,22 +2566,32 @@ func (a *app) controlsView(c *ui.Context) {
 				if a.iconButton(c, iconPrevious, "上一曲", false, a.play.atStart()) && a.play.previous() {
 					a.playCurrent()
 				}
-				label, glyph = "暂停", iconPause
-				if a.playback.State == player.Paused {
-					label, glyph = "继续", iconPlay
+				// The main button names the action it will take: pause while
+				// playing, continue while paused, and start the current queue
+				// track when nothing is loaded.
+				glyph, label = iconPlay, "播放"
+				active := a.playback.State == player.Playing || a.playback.State == player.Buffering
+				if active {
+					glyph, label = iconPause, "暂停"
+				} else if a.playback.State == player.Paused {
+					glyph, label = iconPlay, "继续"
 				}
-				playable := a.playback.State == player.Playing || a.playback.State == player.Paused || a.playback.State == player.Buffering
-				if a.iconButton(c, glyph, label, true, !playable) {
+				startable := has && (a.playback.State == player.Idle || a.playback.State == player.Ended || a.playback.State == player.Failed)
+				if a.iconButton(c, glyph, label, true, !(active || startable || a.playback.State == player.Paused)) {
 					a.togglePlayPause()
 				}
 				if a.iconButton(c, iconNext, "下一曲", false, a.play.atEnd()) && a.play.next() {
 					a.playCurrent()
 				}
-				if a.iconButton(c, iconRetry, "重试", false, !has) {
-					a.playCurrent()
+				if a.playback.State == player.Failed {
+					if a.iconButton(c, iconRetry, "重试", false, !has) {
+						a.playCurrent()
+					}
 				}
-				if a.iconButton(c, iconStop, "停止", false, !has) {
-					a.stopPlayback()
+				if has && a.playback.State != player.Idle && a.playback.State != player.Ended {
+					if a.iconButton(c, iconStop, "停止", false, false) {
+						a.stopPlayback()
+					}
 				}
 			}).Grow(1).Justify(ui.Center)
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
