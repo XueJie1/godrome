@@ -1,6 +1,6 @@
 # Godrome 仓库约定
 
-Claude/Codex 共同遵守本文件。目标和边界见 `docs/intent.md`；本次最小范围见 `docs/spec.md`。
+Claude/Codex 共同遵守本文件。目标和边界见 `docs/intent.md`；本次最小范围见 `docs/spec.md`；代码目录与各文件职责见 `README-dev.md`。
 
 - 维持 Go + MyGO 原生 UI + 进程内 libmpv；不引入 Web UI、后台服务或数据库。
 - 依赖版本由 `go.mod` / `go.sum` 固定。升级必须说明原因；不使用 `@latest` 构建。

@@ -1,7 +1,7 @@
 GO ?= go
 export CGO_ENABLED := 1
 
-.PHONY: run build check test test-audio samples measure acceptance-build
+.PHONY: run build check test test-audio test-mpris samples measure acceptance-build
 run:
 	$(GO) run -buildvcs=false .
 build:
@@ -12,6 +12,8 @@ check:
 	$(GO) vet ./...
 test:
 	$(GO) test -race ./...
+test-mpris:
+	GODROME_MPRIS_TEST=1 dbus-run-session -- $(GO) test -race ./internal/mpris -v
 samples:
 	sh scripts/audio-samples.sh
 test-audio: samples

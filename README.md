@@ -4,7 +4,7 @@ Go + MyGO 原生中文界面，libmpv 在同一进程内播放 Navidrome/Subsoni
 
 本阶段做什么、暂不做什么及验收边界见 [功能边界](docs/scope.md)。
 
-已实现单服务器登录、专辑分页与曲目、歌曲搜索、喜爱、队列、自动下一曲、暂停恢复、上下曲、进度拖动和音量。没有离线下载、歌单编辑、歌词或托盘。
+已实现单服务器登录、专辑分页与曲目、歌曲搜索、喜爱、队列、自动下一曲、暂停恢复、上下曲、进度拖动和音量。窗口聚焦时按空格播放、暂停或继续。Linux 上可作为 MPRIS 服务出现在桌面媒体组件中，显示曲目、歌手、专辑、封面、时长和进度，并接受播放控制。没有离线下载、歌单编辑、歌词或托盘。
 
 ## 运行
 
@@ -47,6 +47,7 @@ go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/egoist/mygo.pro
 ```sh
 make check test
 make test-audio                    # FFmpeg 生成四种样本，libmpv 无声输出测试
+make test-mpris                    # 私有会话总线上验证 MPRIS 属性和控制
 python3 scripts/navidrome-test.py /path/to/navidrome
 ```
 

@@ -56,6 +56,8 @@ func main() {
 		win := mygo.NewWindow(mygo.WindowOptions{Title: "Godrome", Width: settings.Width, Height: settings.Height, MinWidth: 800, MinHeight: 560, Content: ui.View(view)})
 		a.post = win.Update
 		a.listen()
+		// The desktop media widget can raise or close the window too.
+		a.startMPRIS(func() { win.Show(); win.Focus() }, func() { win.Close() })
 		a.control(engine.SetVolume(settings.Volume))
 		a.applyEqualizer()
 		win.OnHide(func() { a.control(engine.SetVisible(false)) })

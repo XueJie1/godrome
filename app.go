@@ -11,6 +11,7 @@ import (
 
 	"godrome/internal/config"
 	"godrome/internal/cover"
+	"godrome/internal/mpris"
 	"godrome/internal/player"
 	"godrome/internal/subsonic"
 
@@ -179,6 +180,11 @@ type app struct {
 	// setAppearance applies light, dark, or system. The window sets it.
 	// The UI tester leaves it empty, because that call waits for the app loop.
 	setAppearance func(mygo.ThemeSource)
+	// media is the optional Linux MPRIS server. artFiles and artTried keep
+	// the current cover for media widgets and avoid repeated downloads.
+	media    *mpris.Server
+	artFiles map[string]string
+	artTried map[string]bool
 }
 
 func newApp(settings config.Settings, path string, engine playback) *app {
@@ -191,7 +197,7 @@ func newApp(settings config.Settings, path string, engine playback) *app {
 	if queue == 0 {
 		queue = queueWidthDefault
 	}
-	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, selectedStarredAlbum: -1, selectedStarredArtist: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}, accent: accentFromSettings(settings.Accent), appearance: settings.Appearance, eqPreset: eqPreset(settings.EQPreset)}
+	a := &app{ctx: ctx, cancel: cancel, engine: engine, settings: settings, configPath: path, server: settings.Server, username: settings.Username, volume: settings.Volume, play: newPlayback(), playback: player.Event{State: player.Idle}, selectedAlbum: -1, selectedSong: -1, selectedQueue: -1, selectedStarredAlbum: -1, selectedStarredArtist: -1, queueVisible: true, sidebarWidth: sidebar, queueWidth: queue, screen: screenLogin, remember: true, likedSongs: map[string]bool{}, likedAlbums: map[string]bool{}, artFiles: map[string]string{}, artTried: map[string]bool{}, accent: accentFromSettings(settings.Accent), appearance: settings.Appearance, eqPreset: eqPreset(settings.EQPreset)}
 	a.volumeBefore = settings.Volume
 	if a.volumeBefore <= 0 {
 		a.volumeBefore = 70
@@ -249,6 +255,7 @@ func (a *app) onPlayback(e player.Event) {
 	if e.State == player.Ended && a.play.advance() {
 		a.playCurrent()
 	}
+	a.updateMedia()
 }
 
 func (a *app) beginPage() (context.Context, uint64) {
@@ -908,6 +915,7 @@ func (a *app) playCurrent() {
 	a.selectedQueue = a.play.queue.Index
 	a.playback = player.Event{Generation: a.generation, State: player.Loading, Duration: song.Duration}
 	a.control(a.engine.Load(path, a.generation))
+	a.updateMedia()
 }
 func (a *app) playSongs(index int) {
 	if a.play.queue.Replace(a.songs, index) {
@@ -918,6 +926,7 @@ func (a *app) control(err error) {
 	if err != nil {
 		a.errorText = err.Error()
 		a.playback.State = player.Failed
+		a.updateMedia()
 	}
 }
 func (a *app) persistPassword() error {
@@ -959,6 +968,7 @@ func (a *app) logout() {
 	a.autoLogin = false
 	a.position = 0
 	a.playback = player.Event{Generation: a.generation, State: player.Idle}
+	a.updateMedia()
 }
 func (a *app) local(paths []string) {
 	a.rememberPlace()
@@ -977,6 +987,9 @@ func (a *app) close() {
 		a.cancel()
 		if a.pageCancel != nil {
 			a.pageCancel()
+		}
+		if a.media != nil {
+			a.media.Close()
 		}
 		a.engine.Close()
 	})
@@ -1195,6 +1208,12 @@ func listScrollGutter(t *ui.Theme) float32 {
 }
 
 func (a *app) view(c *ui.Context) {
+	// Space is a window shortcut, so it does not reach page scrolling. A
+	// focused text input still takes it as text, and a focused button or
+	// toggle keeps it for activation, as the framework expects.
+	if c.Shortcut(0, ui.KeySpace) {
+		a.togglePlayPause()
+	}
 	t := a.applyTheme(c)
 	mode := a.layoutMode(c)
 	// Copy the decision out of the struct. The view closure runs again as
@@ -2140,6 +2159,7 @@ func (a *app) songList(c *ui.Context, emptyTitle string) {
 	}
 	if add >= 0 && add < len(a.songs) {
 		a.play.queue.Add(a.songs[add])
+		a.updateMedia()
 	}
 	if star.index >= 0 && star.index < len(a.songs) {
 		a.setSongStar(a.songs[star.index], star.on)
@@ -2210,14 +2230,13 @@ func (a *app) iconButton(c *ui.Context, glyph *ui.SVG, label string, primary, di
 func (a *app) toggleMute() {
 	if a.volume > 0 {
 		a.volumeBefore = a.volume
-		a.volume = 0
-	} else {
-		if a.volumeBefore <= 0 {
-			a.volumeBefore = 70
-		}
-		a.volume = a.volumeBefore
+		a.setVolume(0)
+		return
 	}
-	a.control(a.engine.SetVolume(a.volume))
+	if a.volumeBefore <= 0 {
+		a.volumeBefore = 70
+	}
+	a.setVolume(a.volumeBefore)
 }
 
 // volumeControl keeps mute one click away. A narrow window opens the
@@ -2247,10 +2266,7 @@ func (a *app) volumeControl(c *ui.Context, t *ui.Theme, compact bool) {
 
 func (a *app) volumeSlider(c *ui.Context) {
 	if ui.Slider(c, &a.volume, 0, 100).Label("音量").Width(110).Changed() {
-		if a.volume > 0 {
-			a.volumeBefore = a.volume
-		}
-		a.control(a.engine.SetVolume(a.volume))
+		a.setVolume(a.volume)
 	}
 }
 
@@ -2270,6 +2286,20 @@ func (a *app) queueOverlay(c *ui.Context) {
 	})
 }
 
+// togglePlayPause is the transport button and the Space shortcut. It pauses
+// a loaded track, resumes it, or starts the current queue track after a stop,
+// failure, or natural end.
+func (a *app) togglePlayPause() {
+	switch a.playback.State {
+	case player.Playing, player.Paused, player.Buffering:
+		a.control(a.engine.Pause(a.playback.State != player.Paused))
+	case player.Idle, player.Ended, player.Failed:
+		if _, ok := a.play.queue.Current(); ok {
+			a.playCurrent()
+		}
+	}
+}
+
 func (a *app) controlsView(c *ui.Context) {
 	t := c.Theme()
 	mode := a.layoutMode(c)
@@ -2286,7 +2316,7 @@ func (a *app) controlsView(c *ui.Context) {
 			ui.Text(c, clockText(a.position)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").Width(40).TextAlign(ui.End)
 			playable := a.playback.State == player.Playing || a.playback.State == player.Paused || a.playback.State == player.Buffering
 			if ui.Slider(c, &a.position, 0, max(1, a.playback.Duration)).Label("播放进度").Grow(1).MinWidth(160).MaxWidth(560).Disabled(!playable || a.playback.Duration <= 0).Changed() {
-				a.control(a.engine.Seek(a.position))
+				a.seekTo(a.position)
 			}
 			ui.Text(c, clockText(a.playback.Duration)).FontSize(11).TextColor(t.TextMuted).FontFeatures("tnum").Width(40)
 		})
@@ -2315,6 +2345,7 @@ func (a *app) controlsView(c *ui.Context) {
 				}
 				if a.iconButton(c, glyph, label, false, false) {
 					a.play.cycleRepeat()
+					a.updateMedia()
 				}
 				if a.iconButton(c, iconPrevious, "上一曲", false, a.play.atStart()) && a.play.previous() {
 					a.playCurrent()
@@ -2325,7 +2356,7 @@ func (a *app) controlsView(c *ui.Context) {
 				}
 				playable := a.playback.State == player.Playing || a.playback.State == player.Paused || a.playback.State == player.Buffering
 				if a.iconButton(c, glyph, label, true, !playable) {
-					a.control(a.engine.Pause(a.playback.State != player.Paused))
+					a.togglePlayPause()
 				}
 				if a.iconButton(c, iconNext, "下一曲", false, a.play.atEnd()) && a.play.next() {
 					a.playCurrent()
@@ -2334,10 +2365,7 @@ func (a *app) controlsView(c *ui.Context) {
 					a.playCurrent()
 				}
 				if a.iconButton(c, iconStop, "停止", false, !has) {
-					a.generation++
-					a.control(a.engine.Stop())
-					a.playback = player.Event{Generation: a.generation, State: player.Idle}
-					a.position = 0
+					a.stopPlayback()
 				}
 			}).Grow(1).Justify(ui.Center)
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
