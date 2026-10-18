@@ -4,10 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
-	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"time"
 
 	"godrome/internal/mpris"
@@ -252,12 +249,8 @@ func (a *app) fetchArtwork(id string) {
 	}
 	a.artTried[id] = true
 	go func() {
-		data, err := client.Cover(a.ctx, id)
-		if err != nil || len(data) == 0 {
-			return
-		}
-		path, err := writeArtwork(id, data)
-		if err != nil {
+		path, err := client.CoverPath(a.ctx, id)
+		if err != nil || path == "" {
 			return
 		}
 		artURL := (&url.URL{Scheme: "file", Path: path}).String()
@@ -266,51 +259,4 @@ func (a *app) fetchArtwork(id string) {
 			a.updateMedia()
 		})
 	}()
-}
-
-func writeArtwork(id string, data []byte) (string, error) {
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(root, "godrome", "covers")
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256([]byte(id))
-	path := filepath.Join(dir, hex.EncodeToString(sum[:16])+imageExtension(data))
-	file, err := os.CreateTemp(dir, "cover-*.tmp")
-	if err != nil {
-		return "", err
-	}
-	temp := file.Name()
-	if _, err = file.Write(data); err != nil {
-		file.Close()
-		os.Remove(temp)
-		return "", err
-	}
-	if err = file.Close(); err != nil {
-		os.Remove(temp)
-		return "", err
-	}
-	if err = os.Rename(temp, path); err != nil {
-		os.Remove(temp)
-		return "", err
-	}
-	return path, nil
-}
-
-func imageExtension(data []byte) string {
-	switch http.DetectContentType(data) {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ".img"
-	}
 }

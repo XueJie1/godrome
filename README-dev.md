@@ -18,6 +18,7 @@ godrome/
 ├── equalizer.go            十段均衡器与预设
 ├── icons.go                SVG 图标
 ├── media.go                空格播放控制、MPRIS 快照与封面缓存
+├── caches.go               封面/元数据磁盘缓存的打开、容量拆分与路由
 ├── metrics.go              可选的 Go 堆测量 CSV
 ├── acceptance_main.go      独立验收驱动（不进入正式构建）
 ├── *_test.go               根包测试
@@ -29,6 +30,7 @@ godrome/
 │   ├── subsonic/           Subsonic/OpenSubsonic HTTP 客户端
 │   ├── player/             libmpv 引擎与 cgo 桥
 │   ├── cover/              封面下载、解码、LRU 缓存
+│   ├── cache/              有界磁盘缓存：哈希文件名、JSON 索引、LRU 淘汰
 │   ├── queue/              纯队列数据结构
 │   └── mpris/              Linux 会话总线媒体接口（非 Linux 为空实现）
 ├── docs/                   规格、计划、验收、证据
@@ -54,8 +56,9 @@ godrome/
 | `repeat.go` | `repeatOff / repeatAll / repeatOne` 三态与切换顺序。 |
 | `equalizer.go` | 10 段频率、增益范围、7 个预设、生成 libmpv `lavfi` 滤镜字符串。 |
 | `icons.go` | 播放、暂停、队列、心形、音量、主题等内联 SVG。 |
-| `media.go` | 把主线程播放状态转成 MPRIS 快照；桌面组件命令回到主线程；把当前封面写入用户缓存并以 `file://` 提供；`setVolume`、`seekTo`、`stopPlayback` 的统一入口。 |
-| `media_test.go` | 空格暂停/恢复、文本输入不触发播放、MPRIS 快照映射与封面文件写入。 |
+| `media.go` | 把主线程播放状态转成 MPRIS 快照；桌面组件命令回到主线程；通过缓存提供 `file://` 封面；`setVolume`、`seekTo`、`stopPlayback` 的统一入口。 |
+| `caches.go` | 打开 `covers` 与 `meta` 两个磁盘缓存，按设置上限 7:1 分配，按 key 前缀路由；提供占用统计、上限调整和清除。 |
+| `media_test.go` | 空格暂停/恢复、文本输入不触发播放、MPRIS 快照映射。 |
 | `metrics.go` | `--metrics file.csv` 时每秒记录 Go 堆和 goroutine；不强制 GC。正式与验收程序共用。 |
 | `acceptance_main.go` | `//go:build ignore` 的独立验收程序；`make acceptance-build` 才编译。自带模拟 Subsonic 服务与场景脚本（empty/albums/library/covers/四种格式/切歌/live）。 |
 | `app_test.go` | 主要 UI 测试：用 MyGO UI tester + 模拟 Subsonic 覆盖登录、搜索、喜欢、历史、栏宽、队列、窄窗口、键盘操作等。 |
@@ -85,7 +88,7 @@ godrome/
 | 1125–1193 | 应用主题、栏宽常量、封面/提示过渡动画、列表滚动条留白。 |
 | 1194–1347 | 根 `view`、三栏布局决策、宽度换算与拖拽夹取、主栏、队列栏。 |
 | 1348–1380 | 侧栏导航。 |
-| 1381–1622 | 设置页：外观、主题色、均衡器、账号、持久化。 |
+| 1381–1622 | 设置页：外观、主题色、均衡器、账号、缓存存储、持久化。 |
 | 1623–1847 | 历史按钮、喜爱页三个标签、占位页、顶栏、提示条、登录页、封面、心形按钮。 |
 | 1848–2010 | 专辑页、歌曲页、各页页眉。 |
 | 2011–2120 | 虚拟歌曲列表（含行内喜欢/更多菜单）。 |
@@ -107,8 +110,9 @@ godrome/
 
 | 文件 | 作用 |
 | --- | --- |
-| `client.go` | `Song/Album/Artist/Starred` 类型；登录 ping、专辑分页、专辑详情、搜索、歌曲分页、喜爱读取、star/unstar、流地址、封面下载。负责 MD5 加盐 token、15 秒超时、4 MiB JSON 上限、1 MiB 封面上限、TLS 验证、拒绝跨源重定向、错误脱敏。 |
+| `client.go` | `Song/Album/Artist/Starred` 类型；登录 ping、专辑分页、专辑详情、搜索、歌曲分页、喜爱读取、star/unstar、流地址、封面下载。负责 MD5 加盐 token、15 秒超时、4 MiB JSON 上限、1 MiB 封面上限、TLS 验证、拒绝跨源重定向、错误脱敏。可选 `BlobCache` 把只读元数据和封面写入磁盘；网络失败时可回退到缓存并标记 stale，`CoverPath` 供 MPRIS 使用。 |
 | `client_test.go` | 模拟服务器验证协议、分页、错误脱敏、不安全 URL 与重定向拒绝。 |
+| `cache_test.go` | 元数据缓存与离线回退、认证/4xx 不回退、封面只下载一次、缓存键不含 token。 |
 
 ### `internal/player` — libmpv 引擎
 
@@ -130,8 +134,15 @@ godrome/
 
 | 文件 | 作用 |
 | --- | --- |
-| `cache.go` | 每页一个 `Cache`；2 个下载/解码 worker、32 个待处理槽、256×256 位图、8 MiB LRU；离开页面取消并释放。限制解码前图片尺寸。 |
+| `cache.go` | 每页一个 `Cache`；2 个下载/解码 worker、32 个待处理槽、256×256 位图、8 MiB LRU；离开页面取消并释放。限制解码前图片尺寸。fetch 由 `subsonic.Client.Cover` 提供，因此命中磁盘缓存时不再联网。 |
 | `cache_test.go` | worker 上限、缓存命中、取消与容量测试。 |
+
+### `internal/cache` — 有界磁盘缓存
+
+| 文件 | 作用 |
+| --- | --- |
+| `store.go` | 一个目录一个 `Store`：键哈希为文件名、`index.json` 记录大小与最近使用时间、临时文件加 rename 原子写、超过上限按 LRU 淘汰到 90%、启动时对账并收养孤儿文件、索引损坏时从目录重建、`Clear` 用 generation 防止并发写入复活。 |
+| `store_test.go` | 读写与路径、LRU 顺序、上限调整、清空、索引损坏恢复、孤儿收养、并发 `-race`。 |
 
 ### `internal/queue` — 队列
 

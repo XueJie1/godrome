@@ -11,7 +11,7 @@ app
  ↓
 session / playback / library
  ↓
-internal services (subsonic, player, cover, config)
+internal services (subsonic, player, cover, cache, config)
 ```
 
 - `main` binds the window, flags, and settings file. It does not contain page or playback rules.
@@ -19,7 +19,7 @@ internal services (subsonic, player, cover, config)
 - `session` owns login, request generation, cancellation, album page cache, and search debounce.
 - `playback` owns the queue, repeat mode, generation, and transport commands.
 - `library` owns track and album values used by the queue and views.
-- `internal/subsonic` speaks the protocol. `internal/player` owns libmpv. `internal/cover` owns fetch, decode, and the bitmap budget. `internal/config` owns the settings whitelist.
+- `internal/subsonic` speaks the protocol. `internal/player` owns libmpv. `internal/cover` owns fetch, decode, and the bitmap budget. `internal/cache` owns the bounded disk store for cover bytes and metadata. `internal/config` owns the settings whitelist.
 
 Forbidden:
 
@@ -44,7 +44,8 @@ Application state must have one owner.
 | Queue, repeat, playback generation | `playback` |
 | Engine position and engine state | `player` |
 | Cover bytes and decoded bitmaps | `cover` |
-| Server, username, volume, window size | `config` |
+| Cover and metadata disk cache | `cache` |
+| Server, username, volume, window size, cache limit | `config` |
 
 `app` may cache a snapshot for the current frame. It does not keep a second copy of the rules.
 

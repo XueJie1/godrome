@@ -18,6 +18,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/zalando/go-keyring"
+	"godrome/internal/cache"
 	"godrome/internal/config"
 	"godrome/internal/cover"
 	"godrome/internal/player"
@@ -1398,4 +1399,117 @@ func coverCacheCounter(n *atomic.Int32) *cover.Cache {
 		n.Add(1)
 		return nil, fmt.Errorf("fixture")
 	}, func() {})
+}
+
+func testCaches(t *testing.T) *appCaches {
+	t.Helper()
+	covers, err := cache.Open(filepath.Join(t.TempDir(), "covers"), 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := cache.Open(filepath.Join(t.TempDir(), "meta"), 16<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &appCaches{covers: covers, meta: meta}
+}
+
+func TestStorageSettings(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.caches = testCaches(t)
+	a.screen = screenSettings
+	a.settingsTab = 3
+	tt := ui.NewTester(a.view, 1080, 720)
+	tt.Frame()
+	if !tt.HasText("离线时显示缓存") || !tt.HasText("清除缓存") || !tt.HasText("已用") {
+		t.Fatalf("storage settings missing: %v", tt.Texts())
+	}
+	if err := tt.Click("离线时显示缓存"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.settings.OfflineCache {
+		t.Fatal("offline cache switch did not turn off")
+	}
+	if err := tt.Click("缓存上限设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("512 MiB"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.settings.CacheLimitMB != 512 {
+		t.Fatalf("cache limit %d", a.settings.CacheLimitMB)
+	}
+	if _, limit := a.caches.Stats(); limit != 512<<20 {
+		t.Fatalf("store limit %d", limit)
+	}
+	if err := tt.Click("清除缓存"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOfflineBadgeOnlyOnContentPages(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.client = &subsonic.Client{}
+	a.screen = screenLibrary
+	a.stale = true
+	tt := ui.NewTester(a.view, 1080, 720)
+	tt.Frame()
+	if _, ok := tt.Find("离线缓存"); !ok {
+		t.Fatalf("offline badge missing: %v", tt.Texts())
+	}
+	a.screen = screenSettings
+	tt.Frame()
+	if _, ok := tt.Find("离线缓存"); ok {
+		t.Fatal("offline badge shown on settings")
+	}
+}
+
+func TestOfflineStartupUsesCachedLibrary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ping.view"):
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		case strings.HasSuffix(r.URL.Path, "/getAlbumList2.view"):
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"a","name":"缓存专辑"}]}}}`)
+		default:
+			fmt.Fprint(w, `{"subsonic-response":{"status":"ok"}}`)
+		}
+	}))
+
+	caches := testCaches(t)
+	seed, err := subsonic.New(server.URL, "user", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.UseCache(caches, true)
+	if _, err := seed.Albums(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+
+	p := &fakePlayer{}
+	settings := config.Defaults()
+	settings.Server = server.URL
+	settings.Username = "user"
+	a := newApp(settings, filepath.Join(t.TempDir(), "settings.json"), p)
+	a.caches = caches
+	updates := make(chan func(), 8)
+	a.post = func(fn func()) { updates <- fn }
+	t.Cleanup(a.close)
+	a.server = server.URL
+	a.username = "user"
+	a.password = "secret"
+	a.login()
+	waitUpdate(t, updates) // login result, then browse starts
+	waitUpdate(t, updates) // cached album page
+	if a.screen != screenAlbums || len(a.albums) != 1 || a.albums[0].Name != "缓存专辑" {
+		t.Fatalf("offline startup screen=%s albums=%v", a.screen, a.albums)
+	}
+	if !a.stale {
+		t.Fatal("offline page is not marked stale")
+	}
 }

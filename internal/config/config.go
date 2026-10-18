@@ -25,9 +25,18 @@ type Settings struct {
 	EQPreset string `json:"eqPreset,omitempty"`
 	// EQGains holds ten decibel values, low frequency first. Omitted means flat.
 	EQGains []float64 `json:"eqGains,omitempty"`
+	// CacheLimitMB bounds the cover and metadata disk cache.
+	CacheLimitMB int `json:"cacheLimitMB"`
+	// OfflineCache shows cached pages when the server cannot be reached.
+	OfflineCache bool `json:"offlineCache"`
 }
 
-func Defaults() Settings { return Settings{Volume: 70, Width: 1080, Height: 720} }
+// CacheLimits are the sizes the settings page offers, in MiB.
+var CacheLimits = []int{128, 256, 512, 1024}
+
+func Defaults() Settings {
+	return Settings{Volume: 70, Width: 1080, Height: 720, CacheLimitMB: 256, OfflineCache: true}
+}
 func Path() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -70,6 +79,11 @@ func Load(path string) (Settings, error) {
 		for i, g := range s.EQGains {
 			s.EQGains[i] = max(-12, min(12, g))
 		}
+	}
+	switch s.CacheLimitMB {
+	case 128, 256, 512, 1024:
+	default:
+		s.CacheLimitMB = 256
 	}
 	return s, nil
 }

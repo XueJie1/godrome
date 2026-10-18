@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,24 +110,5 @@ func TestMediaSnapshot(t *testing.T) {
 	a.playback = player.Event{State: player.Idle}
 	if got := a.mediaSnapshot().Status; got != mpris.StatusStopped {
 		t.Fatalf("idle status %q", got)
-	}
-}
-
-func TestWriteArtwork(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	data := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, make([]byte, 32)...)
-	path, err := writeArtwork("cover-1", data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(path, ".jpg") || !strings.Contains(path, filepath.Join("godrome", "covers")) {
-		t.Fatalf("path %q", path)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(data) {
-		t.Fatal("artwork bytes changed")
 	}
 }

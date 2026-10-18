@@ -29,6 +29,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	s.Appearance = "dark"
 	s.EQPreset = "摇滚"
 	s.EQGains = []float64{5, 4, 2, 0, -1, -1, 1, 3, 4, 4}
+	s.CacheLimitMB = 512
+	s.OfflineCache = false
 	if err := Save(p, s); err != nil {
 		t.Fatal(err)
 	}
@@ -36,15 +38,19 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil || got.Server != s.Server || got.Accent != s.Accent || got.Appearance != s.Appearance || got.EQPreset != s.EQPreset || len(got.EQGains) != 10 {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
+	if got.CacheLimitMB != 512 || got.OfflineCache {
+		t.Fatalf("cache settings: %+v", got)
+	}
 	bad := s
 	bad.Accent = "not-a-color"
 	bad.Appearance = "neon"
 	bad.EQGains = []float64{99}
+	bad.CacheLimitMB = 999
 	if err := Save(p, bad); err != nil {
 		t.Fatal(err)
 	}
 	cleaned, err := Load(p)
-	if err != nil || cleaned.Accent != "" || cleaned.Appearance != "" || cleaned.EQGains != nil {
+	if err != nil || cleaned.Accent != "" || cleaned.Appearance != "" || cleaned.EQGains != nil || cleaned.CacheLimitMB != 256 {
 		t.Fatalf("invalid look kept: %+v %v", cleaned, err)
 	}
 	b, _ := os.ReadFile(p)

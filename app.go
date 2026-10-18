@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -120,11 +119,13 @@ type app struct {
 	post                              func(func())
 	engine                            playback
 	client                            *subsonic.Client
+	caches                            *appCaches
 	settings                          config.Settings
 	configPath                        string
 	server, username, password, query string
 	status, errorText                 string
 	busy                              bool
+	stale                             bool // current page came from the offline cache
 	screen                            screen
 	pageOffset, songOffset            int
 	pages                             []albumPage
@@ -267,6 +268,7 @@ func (a *app) beginPage() (context.Context, uint64) {
 	a.busy = true
 	a.errorText = ""
 	a.status = "加载中…"
+	a.stale = false
 	a.covers = nil
 	a.songs = nil
 	a.albums = nil
@@ -292,6 +294,7 @@ func (a *app) finish(id uint64, err error) bool {
 	a.busy = false
 	a.status = ""
 	a.searching = false
+	a.stale = err == nil && a.client != nil && a.client.Stale()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		a.errorText = err.Error()
 	}
@@ -354,15 +357,27 @@ func (a *app) login() {
 		return
 	}
 	ctx, id := a.beginPage()
+	if a.caches != nil {
+		client.UseCache(a.caches, a.settings.OfflineCache)
+	}
+	offlineAllowed := a.settings.OfflineCache
 	go func() {
 		err := client.Ping(ctx)
+		offline := err != nil && offlineAllowed && subsonic.IsNetworkFailure(err) && client.OfflineAvailable()
 		a.dispatch(func() {
-			if id == a.requestID && dropSaved && err != nil && !errors.Is(err, context.Canceled) && strings.Contains(err.Error(), "认证失败") {
+			if id != a.requestID {
+				return
+			}
+			if dropSaved && errors.Is(err, subsonic.ErrAuth) {
 				_ = config.DeletePassword(a.server, a.username)
+			}
+			if offline {
+				err = nil
 			}
 			if !a.finish(id, err) {
 				return
 			}
+			a.stale = offline
 			a.client = client
 			a.pages = nil
 			a.settings.Server = a.server
@@ -992,6 +1007,9 @@ func (a *app) close() {
 			a.media.Close()
 		}
 		a.engine.Close()
+		if a.caches != nil {
+			_ = a.caches.Close()
+		}
 	})
 }
 func playbackLabel(state player.State) string {
@@ -1445,7 +1463,7 @@ func (a *app) settingsView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 		ui.Text(c, "设置").FontSize(30).FontWeight(700).Padding(6, 2, 0, 2)
-		ui.Tabs(c, &a.settingsTab, "外观", "声音", "账号").Padding(0, 2, 0, 2)
+		ui.Tabs(c, &a.settingsTab, "外观", "声音", "账号", "存储").Padding(0, 2, 0, 2)
 		ui.Scroll(c).Grow(1).MinHeight(120).TrackScroll(&a.settingsScroll).Children(func() {
 			ui.Column(c).Padding(16, 18, 20, 2).MaxWidth(520).Children(func() {
 				switch a.settingsTab {
@@ -1453,6 +1471,8 @@ func (a *app) settingsView(c *ui.Context) {
 					a.equalizerSection(c, t)
 				case 2:
 					a.accountSection(c, t)
+				case 3:
+					a.storageSection(c, t)
 				default:
 					a.lookSection(c, t)
 				}
@@ -1631,6 +1651,99 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme) {
 	})
 }
 
+func (a *app) storageSection(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).Gap(14).MaxWidth(360).Children(func() {
+		if a.caches == nil {
+			ui.Text(c, "缓存不可用。").FontSize(13).TextColor(t.TextMuted)
+		}
+		offline := ui.Checkbox(c, &a.settings.OfflineCache, "离线时显示缓存")
+		if a.caches == nil {
+			offline.Disabled(true)
+		}
+		if offline.Changed() {
+			a.persistCache()
+			if a.client != nil {
+				a.client.SetOfflineCache(a.settings.OfflineCache)
+			}
+		}
+		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
+			ui.Text(c, "缓存上限").Grow(1)
+			labels := cacheLimitLabels()
+			current := cacheLimitLabel(a.settings.CacheLimitMB)
+			sel := ui.Select(c, &current, labels).Label("缓存上限设置")
+			if a.caches == nil {
+				sel.Disabled(true)
+			}
+			if sel.Changed() {
+				a.settings.CacheLimitMB = cacheLimitValue(current)
+				a.applyCacheLimit()
+			}
+		})
+		if a.caches != nil {
+			used, limit := a.caches.Stats()
+			ui.Textf(c, "已用 %s / %s", sizeLabel(used), sizeLabel(limit)).TextColor(t.TextMuted)
+			if ui.Button(c, "清除缓存").Clicked() {
+				if err := a.caches.Clear(); err != nil {
+					a.errorText = "清除缓存失败"
+				} else {
+					// MPRIS holds a file path into the cache; drop it so the
+					// next snapshot fetches the artwork again.
+					a.artFiles = map[string]string{}
+					a.artTried = map[string]bool{}
+					a.updateMedia()
+				}
+			}
+		}
+	})
+}
+
+func (a *app) applyCacheLimit() {
+	if a.caches != nil {
+		a.caches.SetLimitMB(a.settings.CacheLimitMB)
+	}
+	a.persistCache()
+}
+
+func (a *app) persistCache() {
+	if a.configPath == "" {
+		return
+	}
+	if err := config.Save(a.configPath, a.settings); err != nil {
+		a.errorText = "保存设置失败"
+	}
+}
+
+func cacheLimitLabels() []string {
+	labels := make([]string, 0, len(config.CacheLimits))
+	for _, mb := range config.CacheLimits {
+		labels = append(labels, cacheLimitLabel(mb))
+	}
+	return labels
+}
+
+func cacheLimitLabel(mb int) string {
+	if mb == 1024 {
+		return "1 GiB"
+	}
+	return fmt.Sprintf("%d MiB", mb)
+}
+
+func cacheLimitValue(label string) int {
+	for _, mb := range config.CacheLimits {
+		if cacheLimitLabel(mb) == label {
+			return mb
+		}
+	}
+	return 256
+}
+
+func sizeLabel(n int64) string {
+	if n >= 1<<30 {
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	}
+	return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+}
+
 func (a *app) syncEQGains() {
 	for i := range a.eqGain {
 		a.eqGain[i] = a.eq[i]
@@ -1796,7 +1909,19 @@ func (a *app) topBar(c *ui.Context) {
 		} else {
 			ui.Text(c, "本地音频验证").TextColor(t.TextMuted).Grow(1)
 		}
+		if a.stale && a.cacheScreen() {
+			ui.Icon(c, iconOffline).Size(14, 14).TextColor(t.TextMuted).Label("离线缓存").Tooltip("离线缓存")
+		}
 	})
+}
+
+// cacheScreen lists the pages that can be filled from the disk cache.
+func (a *app) cacheScreen() bool {
+	switch a.screen {
+	case screenLibrary, screenAlbums, screenAlbum, screenSearch, screenStarred:
+		return true
+	}
+	return false
 }
 
 func (a *app) message(c *ui.Context) {

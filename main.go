@@ -38,6 +38,11 @@ func main() {
 	settings, err := config.Load(path)
 	engine := player.New(player.Options{AudioOutput: *audio})
 	a := newApp(settings, path, engine)
+	if caches, cacheErr := openCaches(settings.CacheLimitMB); cacheErr != nil {
+		fmt.Fprintln(os.Stderr, "缓存不可用")
+	} else {
+		a.caches = caches
+	}
 	if err != nil {
 		a.errorText = "读取配置失败，已使用默认设置"
 	}
