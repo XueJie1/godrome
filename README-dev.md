@@ -127,6 +127,7 @@ godrome/
 | `mpv_client.h` | 内置的最小 libmpv 客户端 API 头文件（ISC 许可）。 |
 | `state.go` | `displayState`：缓冲/seek 优先于暂停的显示状态规则。 |
 | `locale.go` | cgo 下把 `LC_NUMERIC` 设为 C；避免中文桌面 locale 让 `mpv_create` 失败。 |
+| `arena_linux.go` | `//go:build cgo && linux`：C 构造函数在进程加载时把 glibc malloc arena 限制为 2，早于 Go `init`；有效的 `MALLOC_ARENA_MAX` 环境变量优先。 |
 | `state_test.go` | 显示状态优先级测试。 |
 | `locale_test.go` | 非 C 数字 locale 下仍能初始化 libmpv（无 GUI 测试）。 |
 | `player_integration_test.go` | cgo 集成测试：四种格式、暂停恢复、seek、EOF、HTTP 流；无声输出单列。 |
@@ -175,6 +176,7 @@ godrome/
 | `acceptance.md` | 补充验收记录（UI tester、无声输出、桌面测量分开写）。 |
 | `dependencies.md` | 固定依赖版本与许可证。 |
 | `frontend-improvements.md` | 前端审查与 P1/P2/P3 建议。 |
+| [architecture-review-20261018.md](docs/architecture-review-20261018.md) | 代码结构评分、同类项目参考、优化依据、实施优先级与验证限制；建议尚未实施。 |
 | `evidence/` | 截图、CSV、验收 JSON、图表；测量输出，不是源码。 |
 
 ---

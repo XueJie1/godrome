@@ -1,0 +1,21 @@
+13:46:31 anon=111.1MiB regions=106
+13:46:46 anon=111.1MiB regions=106
+13:47:01 anon=111.1MiB regions=106
+13:47:16 anon=111.1MiB regions=106
+13:47:31 Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/proc/168700/smaps'
+13:47:46 Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/proc/168700/smaps'
+13:48:01 Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/proc/168700/smaps'
+13:48:16 Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/proc/168700/smaps'
+13:48:31 Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/proc/168700/smaps'
+
+[exited with code 0]

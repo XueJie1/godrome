@@ -1,0 +1,9 @@
+13:49:25 anon=24.3MiB regions=109 big=1 alloc=3700KiB sys=11328KiB go=18
+13:49:40 anon=24.4MiB regions=109 big=1 alloc=3839KiB sys=11328KiB go=18
+13:49:55 anon=24.4MiB regions=109 big=1 alloc=4011KiB sys=11296KiB go=18
+13:50:10 anon=24.5MiB regions=109 big=1 alloc=4218KiB sys=11296KiB go=18
+13:50:25 anon=24.7MiB regions=109 big=1 alloc=4360KiB sys=11296KiB go=18
+13:50:40 anon=24.6MiB regions=109 big=1 alloc=4577KiB sys=11328KiB go=18
+13:50:55 anon=24.6MiB regions=109 big=1 alloc=4714KiB sys=11328KiB go=18
+
+[exited with code 144]

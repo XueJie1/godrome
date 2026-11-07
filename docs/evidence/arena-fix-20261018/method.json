@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-18",
+  "scope": "验证 internal/player 的 glibc malloc arena 限制是否在正式程序中生效；独立 headless Sway 单次运行，不是三次验收矩阵，不能替代真实桌面长期结论。",
+  "binary": "make build（CGO_ENABLED=1、-trimpath、-ldflags '-s -w'）",
+  "binary_sha256": "be4e815dc5bd008d32b0b5d99b9904351ee54e9ea14d352263f4b565436ce158",
+  "environment": {
+    "os": "Arch Linux",
+    "kernel": "7.2.10-zen1-1-zen",
+    "go": "go1.27.2-X:nodwarf5 linux/amd64",
+    "display": "私有 headless Sway，HEADLESS-1 1920x1080、125% 缩放；用户桌面未操作",
+    "audio": "ao=null",
+    "samples": "testdata/acceptance-audio/sample.mp3 截成 4.02 秒，复制为 60 个不同文件名"
+  },
+  "method": [
+    "启动私有 headless Sway（WLR_BACKENDS=headless，WLR_RENDERER=gles2），清除 DISPLAY/WAYLAND_DISPLAY/SWAYSOCK/DBUS_SESSION_BUS_ADDRESS。",
+    "运行正式 build/godrome，参数 --audio-output null --autoplay 60 个文件 --quit-after 240s --metrics <csv>。队列按 4 秒 EOF 自动前进。",
+    "每 5 秒读取 /proc/PID/smaps：统计无路径且起始地址按 64 MiB 对齐的匿名映射数量、其 Rss，以及进程 VmRSS、线程数。",
+    "对照：同一二进制设置 MALLOC_ARENA_MAX=64 再跑 240 秒，保留无上限布局；另用 MALLOC_ARENA_MAX=2 跑 150 秒，确认构造函数结果与环境变量一致。",
+    "采样脚本为一次性脚本，未加入仓库；原始数据为本目录三个 JSON。"
+  ],
+  "results": {
+    "fixed_240s": {"rss_start_mib": 197.2, "rss_end_mib": 214.6, "anon_start_mib": 46.5, "anon_end_mib": 47.5, "aligned_blocks": 1, "arena_rss_mib": 13.4, "threads": 35},
+    "uncapped_240s": {"rss_start_mib": 202.0, "rss_end_mib": 215.3, "anon_start_mib": 50.1, "anon_end_mib": 61.1, "aligned_blocks": 38, "arena_rss_mib": 27.0, "threads": 39},
+    "env2_150s": {"rss_end_mib": 212.5, "anon_end_mib": 47.4, "aligned_blocks": 1, "arena_rss_mib": 13.5, "threads": 35}
+  },
+  "limitations": [
+    "单次运行，不是三次重复，也不是 30 分钟矩阵。",
+    "本 headless 环境未复现真实桌面默认布局约 193 MiB 的匿名增长；只能证明限制生效与对齐块数量下降，不能量化真实桌面收益。",
+    "按 64 MiB 对齐的匿名映射归因是布局推断，未做 heaptrack/valgrind 逐调用栈追踪。",
+    "机器同时用于其他任务，绝对值不是独占环境基准。"
+  ]
+}

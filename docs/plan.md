@@ -18,5 +18,6 @@
 - [ ] Linux 实际桌面由用户使用物理键盘/鼠标完成全流程人工操作；自动化输入不等同于这一项。
 - [x] 独立 headless Sway 原生窗口中，浏览大量专辑/滚动封面/四格式播放/暂停各 3×60 秒、切歌 3×30 分钟；含 CPU/OpenGL 诊断与完整 RSS/PSS/Go 堆曲线。全部无声输出，与真实桌面证据分开。
 - [ ] Windows/macOS 桌面播放和内存数据。
+- [ ] 限制 glibc malloc arena（`mallopt(M_ARENA_MAX, 2)` 或等价设置），复测连续切歌 RSS、Go 堆与播放回归；归因见 [acceptance.md](acceptance.md) 的 2026-10-18 节。代码已在 C 构造函数实现并有单次 headless 检查；真实桌面与 30 分钟矩阵复测尚未执行。
 
 统一入口：`make build check test test-audio measure acceptance-build`。补充验收与不干扰桌面的测量入口见 [acceptance.md](acceptance.md)，原始证据与限制见 `report.md`。

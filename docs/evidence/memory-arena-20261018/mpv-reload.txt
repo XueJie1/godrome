@@ -1,0 +1,48 @@
+# 纯 mpv（loop=inf，单文件重播；RSS 单位 KiB）
+mpv pid 170186
+13:46:54 rss_kib=6428
+13:47:04 rss_kib=90460
+13:47:14 rss_kib=90492
+13:47:24 rss_kib=90556
+13:47:34 rss_kib=90812
+13:47:44 rss_kib=90936
+13:47:54 rss_kib=90952
+13:48:04 rss_kib=90968
+13:48:14 rss_kib=90984
+killed
+
+[exited with code 0]
+
+# 纯 mpv（IPC loadfile replace 每 3.2 秒）
+13:47:36 start (idle) rss=73764 KiB
+13:47:40 reload 1: rss=90212 KiB
+13:47:43 reload 2: rss=101084 KiB
+13:47:46 reload 3: rss=103068 KiB
+13:47:49 reload 4: rss=103084 KiB
+13:47:52 reload 5: rss=103120 KiB
+13:47:56 reload 6: rss=103220 KiB
+13:47:59 reload 7: rss=103336 KiB
+13:48:02 reload 8: rss=103352 KiB
+13:48:05 reload 9: rss=103500 KiB
+13:48:08 reload 10: rss=103520 KiB
+13:48:12 reload 11: rss=103540 KiB
+13:48:15 reload 12: rss=103568 KiB
+13:48:18 reload 13: rss=103612 KiB
+13:48:21 reload 14: rss=103628 KiB
+13:48:24 reload 15: rss=103632 KiB
+
+[exited with code 0]
+
+# 纯 mpv（与 godrome 相同选项，IPC loadfile replace 每次 3.2 秒）
+13:49:16 reload 3: rss=103240 KiB
+13:49:25 reload 6: rss=103480 KiB
+13:49:35 reload 9: rss=103648 KiB
+13:49:44 reload 12: rss=103784 KiB
+13:49:54 reload 15: rss=103888 KiB
+13:50:04 reload 18: rss=103928 KiB
+13:50:13 reload 21: rss=103984 KiB
+13:50:23 reload 24: rss=116572 KiB
+13:50:32 reload 27: rss=116608 KiB
+13:50:42 reload 30: rss=116648 KiB
+
+[exited with code 0]

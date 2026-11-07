@@ -1,0 +1,7 @@
+13:49:58 anon=42.4MiB big=3 alloc=5080KiB sys=11360KiB go=15
+13:50:13 anon=51.1MiB big=4 alloc=5114KiB sys=11360KiB go=15
+13:50:28 anon=92.1MiB big=8 alloc=5159KiB sys=11328KiB go=15
+13:50:43 anon=132.0MiB big=12 alloc=5362KiB sys=11328KiB go=15
+13:50:59 anon=172.8MiB big=16 alloc=5380KiB sys=11328KiB go=15
+
+[exited with code 144]

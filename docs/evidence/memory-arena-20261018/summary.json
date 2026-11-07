@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-18",
+  "source_commit": "ac39a0133cb0b589d766ab73e0236d1182e113ac",
+  "binary_sha256": "572cba68d39025347073d240768bcecacf63d571e5a7cc215e1b1aa897b5017b",
+  "units": "MiB；匿名 RSS 指无路径匿名映射的 Rss 之和，块数指单个映射大于 5 MiB 的匿名映射数量。",
+  "scenarios": [
+    {
+      "name": "单曲长播（600 秒样本，不切歌，已验证 MPRIS 状态为 Playing）",
+      "duration_s": 90,
+      "anon_rss": {"first": 24.3, "last": 24.6},
+      "large_anon_blocks": {"first": 1, "last": 1},
+      "go_heap_alloc": {"first_mib": 3.61, "last_mib": 4.60},
+      "conclusion": "平稳，不随播放时长增长",
+      "evidence": "long-track.txt"
+    },
+    {
+      "name": "30 个 4 秒样本连续切换（默认 arena 设置）",
+      "duration_s": 61,
+      "anon_rss": {"first": 42.4, "last": 172.8},
+      "large_anon_blocks": {"first": 3, "last": 16},
+      "go_heap_alloc": {"first_mib": 4.96, "last_mib": 5.25},
+      "conclusion": "填充阶段约 9 MiB/首；Go 堆不增长",
+      "evidence": "switching-30.txt"
+    },
+    {
+      "name": "60 个 4 秒样本连续切换（默认 arena 设置）",
+      "duration_s": 272,
+      "anon_rss": {"first": 40.6, "plateau": 193.3, "last": 193.3},
+      "large_anon_blocks": {"first": 3, "plateau": 16, "last": 16},
+      "conclusion": "约 2 分 20 秒后平台，平台后继续切歌仍不增长；平台约 193 MiB",
+      "evidence": "switching.txt"
+    },
+    {
+      "name": "60 个 4 秒样本连续切换 + MALLOC_ARENA_MAX=2",
+      "duration_s": 272,
+      "anon_rss": {"first": 29.3, "last": 30.2},
+      "large_anon_blocks": {"first": 3, "last": 2},
+      "conclusion": "同一场景全程平稳；匿名 RSS 比默认低约 163 MiB",
+      "evidence": "switching.txt"
+    },
+    {
+      "name": "4 秒样本循环播放后暂停",
+      "duration_s": 45,
+      "anon_rss": {"first": 111.1, "last": 111.1},
+      "conclusion": "暂停后不再变化",
+      "evidence": "paused.txt"
+    },
+    {
+      "name": "纯 mpv CLI，40 次 loadfile replace",
+      "duration_s": 128,
+      "rss_mib": {"first": 101.1, "plateau": 113.8, "last": 114.3},
+      "conclusion": "仅有一次性 arena 增长后平台，不按曲累积",
+      "evidence": "mpv-reload.txt"
+    }
+  ],
+  "go_heap_pprof": {
+    "inuse_space_kib": 6988.4,
+    "heap_sys_mib_approx": 11,
+    "goroutines": "14-20",
+    "evidence": "heap-top.txt"
+  },
+  "original_process": {
+    "note": "日常运行实例，未接入 pprof；在调查期间退出，未完成同进程采样。",
+    "rss_mib": {"at_25s": 253, "at_33min": 352},
+    "threads": {"first": 43, "last": 47}
+  }
+}

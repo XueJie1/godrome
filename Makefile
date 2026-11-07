@@ -1,6 +1,9 @@
 GO ?= go
 export CGO_ENABLED := 1
 
+# The acceptance driver replaces main.go; every other non-test source is shared.
+app_sources := $(filter-out main.go %_test.go,$(wildcard *.go))
+
 .PHONY: run build check test test-audio test-mpris samples measure acceptance-build
 run:
 	$(GO) run -buildvcs=false .
@@ -22,4 +25,4 @@ measure: build
 	python3 scripts/measure.py --output docs/evidence/memory/empty -- ./build/godrome --empty
 acceptance-build:
 	mkdir -p build
-	$(GO) build -buildvcs=false -trimpath -ldflags='-s -w -X github.com/egoist/mygo.production=1' -o build/godrome-acceptance app.go metrics.go acceptance_main.go
+	$(GO) build -buildvcs=false -trimpath -ldflags='-s -w -X github.com/egoist/mygo.production=1' -o build/godrome-acceptance $(app_sources)

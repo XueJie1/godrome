@@ -120,3 +120,38 @@ CPU、线程和 goroutine 的峰值、逐轮时长及状态计数完整保留在
 下一阶段以约 110 MiB 浏览、180 MiB 短时无声播放、350 MiB 高频切歌作为本机 headless 观测基线，分别跟踪原生与 Go 堆增长；先做分配归因再制定预算。不得把这些值当作所有平台、显示环境和真实音频输出的硬性上限。
 
 剩余项：Linux 由用户以物理键盘/鼠标完成全流程人工操作，待用户方便时确认；Windows/macOS 原生 cgo 构建、可执行自动测试、真实桌面播放和内存数据，因暂无测试机/已授权 CI 按用户指示保留待验收。当前不能宣称完整原型或三端运行兼容验收完成。
+
+## 2026-10-18 内存增长归因：glibc malloc arena
+
+日常运行时观察到一个进程约 33 分钟内 RSS 从约 253 MiB 升到约 352 MiB，线程 43→47；同一时间 Go 堆始终很小。为回答增长来自哪里，在用户真实桌面上做了短时归因。**这不是 headless 验收矩阵，不能替代长期稳定性或跨平台结论。**
+
+方法：在源码临时副本中加入只监听 `127.0.0.1:6061` 的 `net/http/pprof`，按正式 release 参数构建；每次运行使用独立配置、`ao=null`，`--metrics` 每秒记录 Go 堆，另每 10–15 秒读取 `/proc/PID/smaps` 并按映射归因 RSS。匿名映射中起始地址按 64 MiB 对齐的块按 glibc malloc arena 解释（glibc `HEAP_MAX_SIZE` 为 64 MiB）。原进程在调查中退出，因此用该临时构建复现；调查时正式代码未修改，后续修复见下方「优化方案」。环境、构建哈希、限制与复现说明见 [method.json](evidence/memory-arena-20261018/method.json)。
+
+| 场景（连续切歌均为 4 秒样本，`ao=null`） | 观测时长 | 匿名 RSS | 5 MiB 以上匿名块数 | 结论 |
+| --- | --- | --- | --- | --- |
+| 单曲长播（600 秒样本，不切歌） | 90 秒 | 24.3 → 24.6 MiB | 1 → 1 | 平稳 |
+| 30 首连续切换（填充阶段） | 61 秒 | 42.4 → 172.8 MiB | 3 → 16 | 约 9 MiB/首 |
+| 60 首连续切换（含平台） | 4.5 分钟 | 40.6 → 193.3 MiB，约 2 分 20 秒后平台 | 3 → 16 | 平台后继续切歌不再增长 |
+| 同样 60 首 + `MALLOC_ARENA_MAX=2` | 4.5 分钟 | 29.3 → 30.2 MiB | 3 → 2 | 全程平稳，比默认低约 163 MiB |
+| 4 秒样本循环后暂停 | 45 秒 | 111.1 MiB 不变 | 暂停前 10 | 停止切歌即停止增长 |
+| 纯 mpv CLI，40 次 `loadfile replace` | 128 秒 | 101.1 → 114.3 MiB，第 24 次后平台 | 不适用 | libmpv 本身不按曲累积 |
+
+同一时段 pprof 的 `inuse_space` 为 6.8 MiB，`HeapSys` 约 11 MiB，goroutine 14–20；Go 堆不随切歌增长。原始采样见 [long-track.txt](evidence/memory-arena-20261018/long-track.txt)、[switching.txt](evidence/memory-arena-20261018/switching.txt)、[switching-30.txt](evidence/memory-arena-20261018/switching-30.txt)、[paused.txt](evidence/memory-arena-20261018/paused.txt)、[mpv-reload.txt](evidence/memory-arena-20261018/mpv-reload.txt)、[heap-top.txt](evidence/memory-arena-20261018/heap-top.txt)、Go 堆原始采样 [go-heap-default.csv](evidence/memory-arena-20261018/go-heap-default.csv) 和 [go-heap-capped.csv](evidence/memory-arena-20261018/go-heap-capped.csv)，以及汇总 [summary.json](evidence/memory-arena-20261018/summary.json)。
+
+结论：
+
+- 增长全部落在匿名映射，且都是起始地址 64 MiB 对齐、单块提交约 10–12 MiB 的映射，符合 glibc 每个线程 arena 保留 64 MiB 地址空间、按触达页计入 RSS 的布局。
+- 触发条件是切歌，不是播放时长或 UI 刷新：单曲长播与暂停都平稳。切歌时 libmpv 的工作线程分配，在进程已有较多线程（Go 运行时、UI、旧播放线程）时更容易落到新 arena。
+- 填充阶段约 9 MiB/首；本机在 16 个大块（约 193 MiB 匿名 RSS）处平台化，之后继续切歌近两分钟仍保持平稳。默认每个进程最多 8×核数（本机 16 核 → 最多 128）个 arena，所以平台高度会随负载和线程数变化，不能当作无限泄漏，也不能当作低内存保证。
+- 这些页是分配器保留，不一定是未释放的泄漏。RSS 不会自行回落，所以看起来像持续增长。2026-10-07 的 30 分钟切歌平台（约 350 MiB、Go 堆约 4 MiB）与该机制一致。
+
+优化方案：
+
+1. **立即验证的缓解**：以 `MALLOC_ARENA_MAX=2` 启动。同一 60 首切歌场景中匿名 RSS 从默认的 193.3 MiB 平台降到 30.2 MiB 并保持平稳；这是已验证的行为，不是长期验收。
+2. **代码修复**（2026-10-18 已实现，headless 单次检查）：`internal/player/arena_linux.go` 用 cgo 包的 C 构造函数，在进程加载时执行 `mallopt(M_ARENA_MAX, 2)`（仅 glibc，其他 libc 为空）。不能用 Go 包 `init`：实测到 Go 初始化运行时进程已有 4 个 glibc arena，此时限制只阻止新增，已有的 64 MiB 块仍保留；改到构造函数后结果与 `MALLOC_ARENA_MAX=2` 环境变量一致。环境中显式设置有效值时以环境变量为准，保留无上限对照；无效值回退到 2。代价是多线程分配争用略增，对音乐播放器可接受。
+3. **验收标准**：同样的 60 次切歌中匿名 RSS 不再随切歌线性增长；30 分钟 headless 切歌复测；MP3/FLAC/AAC/Opus、暂停、seek、MPRIS 与退出回归通过；浏览/短时播放/高频切歌基线重新记录，旧约 350 MiB 基线与新配置分开报告。
+4. **后续**：若 `mallopt` 仍不足，再用 heaptrack/valgrind 做逐调用栈归因。不强制 GC，也不把短时未增长写成长期稳定。
+
+实现检查（2026-10-18，独立 headless Sway + 正式 `build/godrome`，按 4 秒断点播放 60 个不同的 MP3，每次 240 秒，`ao=null`）：每 5 秒读取 `/proc/PID/smaps`，按 64 MiB 对齐的匿名映射归因 arena。默认（构造函数限制）RSS 197.2→214.6 MiB、匿名 RSS 46.5→47.5 MiB，始终只有 1 个对齐块（arena RSS 13.4 MiB）；`MALLOC_ARENA_MAX=64` 对照 RSS 202.0→215.3 MiB、匿名 50.1→61.1 MiB、38 个对齐块（arena RSS 27.0 MiB）。两者填充后都进入平台，没有随曲目线性增长。本 headless 环境没有复现真实桌面默认布局约 193 MiB 的匿名增长，因此这里只证明限制生效、对齐块从 38 降到 1、匿名峰值约低 14 MiB，不能据此宣称真实桌面收益。单次运行，不是三次矩阵；原始采样见 [evidence/arena-fix-20261018](evidence/arena-fix-20261018/method.json)。
+
+边界：数据来自 Wayland + NVIDIA 的真实桌面，时长 45 秒到约 5 分钟，机器同时用于其他任务；未做逐调用栈的原生分配追踪，arena 归因依据映射布局与对照实验。代码修复已在 headless 单次检查中生效，但真实桌面复测、30 分钟 headless 矩阵和三次重复尚未执行；本节此前的真实桌面数据仍来自带 `MALLOC_ARENA_MAX=2` 的临时构建或默认布局，不是新代码的长期结果，新配置也未加入本轮内存矩阵。

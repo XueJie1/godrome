@@ -1,0 +1,22 @@
+File: godrome
+Build ID: 9bb7a13489bd6dd25eef0351f4dc62660bdde5b7
+Type: inuse_space
+Time: 2026-10-18 13:47:38 CST
+Showing nodes accounting for 6988.40kB, 100% of 6988.40kB total
+Showing top 15 nodes out of 73
+      flat  flat%   sum%        cum   cum%
+    2565kB 36.70% 36.70%     2565kB 36.70%  runtime.mallocgc
+ 2368.55kB 33.89% 70.60%  2368.55kB 33.89%  github.com/egoist/mygo/internal/scene.NewAtlas (inline)
+  515.19kB  7.37% 77.97%   515.19kB  7.37%  unicode.map.init.2
+  514.38kB  7.36% 85.33%   514.38kB  7.36%  github.com/egoist/mygo/internal/text.(*System).Glyph
+  513.12kB  7.34% 92.67%   513.12kB  7.34%  github.com/egoist/mygo/ui.(*engine).lookState
+  512.16kB  7.33%   100%   512.16kB  7.33%  net/http.ListenAndServe
+         0     0%   100%  3396.05kB 48.60%  github.com/ebitengine/purego.RegisterFunc.func4
+         0     0%   100%  3396.05kB 48.60%  github.com/ebitengine/purego.callbackWrap
+         0     0%   100%  3396.05kB 48.60%  github.com/ebitengine/purego.syscall_SyscallN
+         0     0%   100%  3396.05kB 48.60%  github.com/egoist/mygo.(*Application).Run
+         0     0%   100%  2368.55kB 33.89%  github.com/egoist/mygo.(*Application).handleReady
+         0     0%   100%  2368.55kB 33.89%  github.com/egoist/mygo.(*Window).attachContent
+         0     0%   100%  1027.50kB 14.70%  github.com/egoist/mygo.(*windowHandler).SurfaceEvent
+         0     0%   100%  2368.55kB 33.89%  github.com/egoist/mygo.NewWindow
+         0     0%   100%  2368.55kB 33.89%  github.com/egoist/mygo.NewWindow.func1

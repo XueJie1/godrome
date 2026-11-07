@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-18",
+  "scope": "用户真实桌面（Wayland + NVIDIA）上的短时归因调查；不是 headless Sway 验收矩阵，不能替代长期稳定性或跨平台结论。",
+  "source_commit": "ac39a0133cb0b589d766ab73e0236d1182e113ac",
+  "build": "make build（CGO_ENABLED=1、-trimpath、-ldflags '-s -w'），另在源码临时副本加入仅监听 127.0.0.1:6061 的 net/http/pprof；该文件不进入正式构建，其余源码相同。",
+  "binary_sha256": "572cba68d39025347073d240768bcecacf63d571e5a7cc215e1b1aa897b5017b",
+  "environment": {
+    "os": "Arch Linux",
+    "kernel": "7.2.10-zen1-1-zen",
+    "cpus": 16,
+    "go": "go1.27.2-X:nodwarf5 linux/amd64",
+    "session": "Wayland wayland-1",
+    "gpu_driver": "NVIDIA 580.178.04",
+    "mpv": "1:0.41.0-6（libmpv.so.2）"
+  },
+  "method": [
+    "临时构建暴露 pprof；每次运行使用独立 JSON 配置，音频输出为 null。",
+    "通过 --metrics 每秒记录 Go HeapAlloc/HeapSys/goroutine；pprof 取 inuse_space。",
+    "每 10–15 秒读取 /proc/PID/smaps，把 RSS 分为具名映射与匿名映射，并统计起始地址按 64 MiB 对齐的匿名映射：glibc 的 malloc arena（HEAP_MAX_SIZE）为 64 MiB 对齐。",
+    "场景：单曲长播（600 秒样本，不切歌）、30/60 个 4 秒样本连续切换、同样切换并设置 MALLOC_ARENA_MAX=2、纯 mpv CLI 反复 loadfile replace。",
+    "暂停对照：4 秒样本循环播放后暂停，继续采样 45 秒。"
+  ],
+  "reproduce": [
+    "rsync -a --exclude build --exclude .git --exclude docs/evidence ~/workspace/godrome/ /tmp/godrome-pprof/",
+    "在 /tmp/godrome-pprof 添加临时文件 zz_pprof.go：package main; import (\"net/http\"; _ \"net/http/pprof\"); func init() { go http.ListenAndServe(\"127.0.0.1:6061\", nil) }（仅用于调查，不提交）",
+    "cd /tmp/godrome-pprof && make build",
+    "MALLOC_ARENA_MAX=2 ./build/godrome --config /tmp/offline-settings.json --audio-output null --metrics /tmp/heap.csv --autoplay /tmp/samples/s*.mp3",
+    "curl -s 'http://127.0.0.1:6061/debug/pprof/heap?gc=1' -o heap.pb.gz && go tool pprof -top heap.pb.gz",
+    "重复读取 /proc/PID/smaps：统计 Rss，并单独累计无路径且起始地址按 64 MiB 对齐的匿名映射"
+  ],
+  "limitations": [
+    "短时（45 秒到约 5 分钟）观测，不证明更长时间或其他工作负载下的上限。",
+    "未做逐调用栈的原生分配追踪（如 heaptrack/valgrind），arena 归因依据映射大小、对齐和增长时机。",
+    "机器同时用于其他任务，CPU 与内存绝对值不是独占环境基准。",
+    "未修改或提交正式代码；优化方案尚未实现和验收。"
+  ]
+}
