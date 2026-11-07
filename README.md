@@ -12,6 +12,8 @@
   [![状态](https://img.shields.io/badge/状态-已归档-lightgrey?style=flat-square)](#归档说明)
 
   [功能](#功能) • [安装](#安装) • [快速开始](#快速开始) • [使用](#使用) • [常见问题](#常见问题) • [开发](#开发)
+
+  **简体中文** • [English](README.en.md)
 </div>
 
 ## 归档说明
