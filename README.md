@@ -9,9 +9,22 @@
   [![Go](https://img.shields.io/badge/Go-1.27.1-00ADD8?style=flat-square)](https://go.dev)
   [![许可证](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
   [![平台](https://img.shields.io/badge/Linux-已验证-success?style=flat-square)](#系统支持)
+  [![状态](https://img.shields.io/badge/状态-已归档-lightgrey?style=flat-square)](#归档说明)
 
   [功能](#功能) • [安装](#安装) • [快速开始](#快速开始) • [使用](#使用) • [常见问题](#常见问题) • [开发](#开发)
 </div>
+
+## 归档说明
+
+> [!WARNING]
+> **Godrome 已归档，不再维护。**
+>
+> 推荐改用 [MyGO Music](https://github.com/egoist/mygo-music)。它原本是网易云音乐第三方客户端，收到律师函后撤回了内置的音乐服务，改造成不绑定任何 Provider 的播放器，只保留前端、播放和插件系统，音乐接入交给社区插件。
+>
+> - **Navidrome / Subsonic**：安装本仓库作者编写的插件 [mygo-music-subsonic](https://github.com/XueJie1/mygo-music-subsonic)，即可在 MyGO Music 中连接你的曲库。
+> - **想要开箱即用的 Subsonic 整合版**：可以用第三方 fork [cfour-hi/mygo-cloudmusic](https://github.com/cfour-hi/mygo-cloudmusic)，它基于旧版 MyGO Music 增加了 Subsonic / Navidrome 支持。
+>
+> 下方文档仅作存档参考，不再更新。
 
 Godrome 是一个中文界面的桌面音乐播放器。它直接连接你的 Navidrome（或任何标准 Subsonic/OpenSubsonic 服务器），播放音乐时不需要浏览器。
 
